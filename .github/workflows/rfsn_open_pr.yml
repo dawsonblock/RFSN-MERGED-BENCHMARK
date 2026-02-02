@@ -1,0 +1,61 @@
+name: RFSN Open PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      goal:
+        description: "Goal"
+        required: true
+        default: "Fix failing tests"
+      verify:
+        description: "Verify command"
+        required: true
+        default: "pytest -q"
+      branch:
+        description: "Branch name"
+        required: true
+        default: "rfsn/autofix"
+
+jobs:
+  rfsn_pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build -t rfsn-coding:latest .
+
+      - name: Run RFSN
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          mkdir -p artifacts
+          GOAL="${{ github.event.inputs.goal }}"
+          VERIFY="${{ github.event.inputs.verify }}"
+          rfsn --profile ci_safe --repo "$PWD" --goal "$GOAL" --verify "$VERIFY"
+
+      - name: Summary
+        run: |
+          python scripts/rfsn_pr_summary.py \
+            --repo "$PWD" \
+            --events artifacts/events.jsonl \
+            --goal "${{ github.event.inputs.goal }}" \
+            --out artifacts/RFSN_SUMMARY.md
+
+      - name: Create PR if changes exist
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: ${{ github.event.inputs.branch }}
+          title: "RFSN: ${{ github.event.inputs.goal }}"
+          body-path: artifacts/RFSN_SUMMARY.md
+          commit-message: "RFSN: ${{ github.event.inputs.goal }}"
+          add-paths: |
+            rfsn_controller/**
+            cgw_ssl_guard/**
+            tests/**
+            pyproject.toml
+            requirements*.txt

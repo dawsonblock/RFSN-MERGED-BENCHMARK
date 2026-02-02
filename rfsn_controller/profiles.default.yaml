@@ -1,0 +1,90 @@
+\
+profiles:
+  local_dev:
+    sandbox: local
+    budgets:
+      max_steps: 25
+      max_seconds: 1800
+      max_llm_calls: 20
+    contracts:
+      require_tests_pass: true
+      protected_paths: []
+    allowlist_profile: dev
+    event_log_path: artifacts/events.jsonl
+    publish:
+      backend: local
+      local_dir: artifacts/published
+    signing:
+      enabled: true
+      key_env: RFSN_SIGNING_KEY
+
+  ci_safe:
+    sandbox: docker
+    docker:
+      image: rfsn-coding:latest
+      network: none
+      readonly: true
+    budgets:
+      max_steps: 12
+      max_seconds: 900
+      max_llm_calls: 10
+    contracts:
+      require_tests_pass: true
+      protected_paths:
+        - ".github/"
+        - "infra/"
+    allowlist_profile: ci
+    event_log_path: artifacts/events.jsonl
+    publish:
+      backend: local
+      local_dir: artifacts/published
+    signing:
+      enabled: true
+      key_env: RFSN_SIGNING_KEY
+
+  public_repo:
+    sandbox: docker
+    docker:
+      image: rfsn-coding:latest
+      network: none
+      readonly: true
+    budgets:
+      max_steps: 8
+      max_seconds: 600
+      max_llm_calls: 6
+    contracts:
+      require_tests_pass: true
+      protected_paths:
+        - ".github/"
+        - ".gitignore"
+    allowlist_profile: minimal
+    event_log_path: artifacts/events.jsonl
+    publish:
+      backend: local
+      local_dir: artifacts/published
+    signing:
+      enabled: true
+      key_env: RFSN_SIGNING_KEY
+
+  regulated:
+    sandbox: docker
+    docker:
+      image: rfsn-coding:latest
+      network: none
+      readonly: true
+    budgets:
+      max_steps: 6
+      max_seconds: 600
+      max_llm_calls: 4
+    contracts:
+      require_tests_pass: true
+      protected_paths: ["."]
+    allowlist_profile: minimal
+    event_log_path: artifacts/events.jsonl
+    publish:
+      backend: s3
+      s3_bucket: your-bucket
+      s3_prefix: rfsn/runs
+    signing:
+      enabled: true
+      key_env: RFSN_SIGNING_KEY

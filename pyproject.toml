@@ -1,0 +1,153 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "rfsn-controller"
+version = "1.4.3"
+description = "RFSN Sandbox Controller - Intelligent Autonomous Code Agent"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [
+    { name = "Dawson Block", email = "dawson@example.com" },
+]
+dependencies = [
+    "python-dotenv>=1.0.1,<2.0",
+    "fastapi>=0.110.0,<1.0",
+    "uvicorn[standard]>=0.27.0,<1.0",
+    "websockets>=12.0,<14.0",
+    "requests>=2.32.5,<3.0",
+    "httpx[http2]>=0.27.0,<1.0",
+    "pydantic>=2.0.0,<3.0",
+    "pydantic-settings>=2.0.0,<3.0",
+]
+
+[project.optional-dependencies]
+llm = [
+    "openai>=1.0.0,<2.0",
+    "google-genai>=0.7.0,<1.0",
+    "anthropic>=0.25.0,<1.0",
+    "tiktoken>=0.6.0,<1.0",
+]
+engram = [
+    "torch>=2.3.0,<3.0",
+    "numpy>=1.26.0,<2.0",
+    "transformers>=4.40.0,<5.0",
+    "sympy>=1.12,<2.0",
+]
+dev = [
+    "pytest>=8.0.0,<9.0",
+    "pytest-asyncio>=0.23.0,<1.0",
+    "pytest-cov>=4.1.0,<5.0",
+    "pytest-xdist>=3.5.0,<4.0",
+    "pytest-timeout>=2.2.0,<3.0",
+    "hypothesis>=6.98.0,<7.0",
+    "ruff>=0.3.0,<1.0",
+    "mypy>=1.9.0,<2.0",
+    "types-toml>=0.10.0",
+    "types-requests>=2.31.0",
+    "pre-commit>=3.6.0,<4.0",
+    "pyupgrade>=3.15.0,<4.0",
+]
+cache = [
+    "diskcache>=5.6.0,<6.0",
+    "redis>=5.0.0,<6.0",
+]
+observability = [
+    "structlog>=24.1.0,<25.0",
+    "prometheus-client>=0.20.0,<1.0",
+    "opentelemetry-api>=1.22.0,<2.0",
+    "opentelemetry-sdk>=1.22.0,<2.0",
+    "opentelemetry-exporter-jaeger>=1.22.0,<2.0",
+]
+semantic = [
+    "sentence-transformers>=2.3.0,<3.0",
+    "faiss-cpu>=1.7.4,<2.0",
+]
+async = [
+    "aiosqlite>=0.19.0,<1.0",
+    "aiohttp>=3.9.0,<4.0",
+    "aiofiles>=23.0.0,<24.0",
+    "aioredis>=2.0.1,<3.0",
+]
+cli = [
+    "rich>=13.7.0,<14.0",
+    "click>=8.1.0,<9.0",
+]
+
+[project.scripts]
+rfsn = "rfsn_controller.cli:main"
+
+[project.entry-points.'rfsn.buildpacks']
+python = "rfsn_controller.buildpacks.python_pack:PythonBuildpack"
+node = "rfsn_controller.buildpacks.node_pack:NodeBuildpack"
+go = "rfsn_controller.buildpacks.go_pack:GoBuildpack"
+rust = "rfsn_controller.buildpacks.rust_pack:RustBuildpack"
+cpp = "rfsn_controller.buildpacks.cpp_pack:CppBuildpack"
+java = "rfsn_controller.buildpacks.java_pack:JavaBuildpack"
+dotnet = "rfsn_controller.buildpacks.dotnet_pack:DotnetBuildpack"
+polyrepo = "rfsn_controller.buildpacks.polyrepo_pack:PolyrepoBuildpack"
+
+[tool.hatch.build.targets.wheel]
+packages = ["rfsn_controller"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --strict-markers --timeout=30"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests requiring network",
+    "unit: marks tests as unit tests",
+    "security: marks tests as security-related tests",
+    "scanner: marks tests for shell scanner",
+    "asyncio: marks tests as async tests",
+    "benchmark: marks tests as performance benchmarks",
+    "performance: marks tests as performance tests",
+]
+filterwarnings = [
+    "ignore:Using `@model_validator` with mode='after'.*:DeprecationWarning:google\\.genai\\.types",
+    "ignore:(?s).*Python version 3\\.9 past its end of life.*:FutureWarning:google\\.auth(\\.|\\$)",
+    "ignore:(?s).*Python version 3\\.9 past its end of life.*:FutureWarning:google\\.oauth2(\\.|\\$)",
+]
+
+[tool.pytest_asyncio]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+exclude = ["RFSN", "build", "dist", ".venv", ".eggs"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "B",   # flake8-bugbear
+    "I",   # isort
+    "UP",  # pyupgrade
+    "SIM", # flake8-simplify
+    "PL",  # pylint
+    "C4",  # flake8-comprehensions
+    "RUF", # ruff-specific rules
+]
+ignore = [
+    "PLR0913", # Too many arguments
+    "PLR2004", # Magic value comparison
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+check_untyped_defs = true
+disallow_untyped_defs = false
+ignore_missing_imports = true
+exclude = ["RFSN", "tests"]
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = false
+strict_optional = true

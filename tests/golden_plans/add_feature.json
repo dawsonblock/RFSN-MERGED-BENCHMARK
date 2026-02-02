@@ -1,0 +1,56 @@
+{
+    "name": "add_feature",
+    "description": "Golden example for adding a new feature",
+    "goal": "Add user authentication feature with login/logout",
+    "context": {
+        "repo_type": "python",
+        "language": "python",
+        "test_cmd": "pytest",
+        "feature_description": "User authentication with session management"
+    },
+    "invariants": {
+        "min_steps": 4,
+        "max_steps": 10,
+        "required_step_types": [
+            "design",
+            "implement",
+            "test"
+        ],
+        "forbidden_files": [
+            "controller.py",
+            "*.env",
+            "secrets/*"
+        ],
+        "must_have_verify": true,
+        "must_have_tests": true
+    },
+    "expected_step_pattern": [
+        {
+            "pattern": "design|plan|architecture",
+            "description": "Should start with design/planning",
+            "required_fields": [
+                "intent",
+                "success_criteria"
+            ]
+        },
+        {
+            "pattern": "implement|create|add",
+            "description": "Must have implementation step(s)",
+            "required_fields": [
+                "allowed_files"
+            ]
+        },
+        {
+            "pattern": "test|verify",
+            "description": "Must add tests",
+            "required_fields": [
+                "verify"
+            ]
+        },
+        {
+            "pattern": "document|update",
+            "description": "Should update documentation",
+            "optional": true
+        }
+    ]
+}

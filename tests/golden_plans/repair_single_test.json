@@ -1,0 +1,60 @@
+{
+    "name": "repair_single_test",
+    "description": "Golden example for repairing a single failing test",
+    "goal": "Fix failing test test_example.py::test_function",
+    "context": {
+        "repo_type": "python",
+        "language": "python",
+        "test_cmd": "pytest",
+        "failing_tests": [
+            "test_example.py::test_function"
+        ]
+    },
+    "invariants": {
+        "min_steps": 3,
+        "max_steps": 8,
+        "required_step_types": [
+            "analyze",
+            "fix",
+            "verify"
+        ],
+        "forbidden_files": [
+            "controller.py",
+            "*.env",
+            "secrets/*"
+        ],
+        "must_have_verify": true
+    },
+    "expected_step_pattern": [
+        {
+            "pattern": "analyze",
+            "description": "First step should analyze the failure",
+            "required_fields": [
+                "intent",
+                "success_criteria"
+            ]
+        },
+        {
+            "pattern": "locate|find|identify|implement",
+            "description": "Should locate the source or implement fix",
+            "required_fields": [
+                "allowed_files"
+            ],
+            "optional": true
+        },
+        {
+            "pattern": "implement|fix|change",
+            "description": "Must have an implementation step",
+            "required_fields": [
+                "allowed_files"
+            ]
+        },
+        {
+            "pattern": "verify|test",
+            "description": "Should end with verification",
+            "required_fields": [
+                "verify"
+            ]
+        }
+    ]
+}

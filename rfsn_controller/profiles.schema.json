@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RFSN Profiles",
+  "type": "object",
+  "properties": {
+    "profiles": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "sandbox": { "type": "string", "enum": ["local", "docker"] },
+          "docker": {
+            "type": "object",
+            "properties": {
+              "image": { "type": "string" },
+              "network": { "type": "string", "enum": ["none", "bridge"] },
+              "readonly": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          },
+          "budgets": {
+            "type": "object",
+            "properties": {
+              "max_steps": { "type": "integer", "minimum": 1 },
+              "max_seconds": { "type": "integer", "minimum": 1 },
+              "max_llm_calls": { "type": "integer", "minimum": 1 }
+            },
+            "additionalProperties": false
+          },
+          "contracts": {
+            "type": "object",
+            "properties": {
+              "require_tests_pass": { "type": "boolean" },
+              "protected_paths": { "type": "array", "items": { "type": "string" } }
+            },
+            "additionalProperties": false
+          },
+          "allowlist_profile": { "type": "string" },
+          "event_log_path": { "type": "string" },
+          "publish": {
+            "type": "object",
+            "properties": {
+              "backend": { "type": "string", "enum": ["local", "s3"] },
+              "local_dir": { "type": "string" },
+              "s3_bucket": { "type": "string" },
+              "s3_prefix": { "type": "string" }
+            },
+            "additionalProperties": false
+          },
+          "signing": {
+            "type": "object",
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "key_env": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": ["sandbox"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": ["profiles"],
+  "additionalProperties": false
+}

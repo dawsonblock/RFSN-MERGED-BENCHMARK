@@ -1,0 +1,58 @@
+{
+    "name": "refactor_module",
+    "description": "Golden example for refactoring a module",
+    "goal": "Refactor utils module to improve code organization",
+    "context": {
+        "repo_type": "python",
+        "language": "python",
+        "test_cmd": "pytest",
+        "target_module": "utils"
+    },
+    "invariants": {
+        "min_steps": 3,
+        "max_steps": 8,
+        "required_step_types": [
+            "analyze",
+            "implement",
+            "verify"
+        ],
+        "forbidden_files": [
+            "controller.py",
+            "*.env"
+        ],
+        "must_have_verify": true,
+        "must_preserve_tests": true
+    },
+    "expected_step_pattern": [
+        {
+            "pattern": "analyze|understand|review",
+            "description": "First understand the current structure",
+            "required_fields": [
+                "intent"
+            ]
+        },
+        {
+            "pattern": "plan|design|implement",
+            "description": "Plan or implement the refactoring approach",
+            "required_fields": [
+                "success_criteria"
+            ]
+        },
+        {
+            "pattern": "refactor|reorganize|move|implement|change",
+            "description": "Execute refactoring",
+            "required_fields": [
+                "allowed_files",
+                "rollback_hint"
+            ],
+            "optional": true
+        },
+        {
+            "pattern": "verify|test",
+            "description": "Verify no regressions",
+            "required_fields": [
+                "verify"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,76 @@
+name: Upstream Learning Loop
+
+on:
+    push:
+        branches: [main]
+    schedule:
+        - cron: "0 0 * * *" # Daily learning run
+    workflow_dispatch:
+        inputs:
+            dataset:
+                description: "Dataset to learn from"
+                default: "swebench_lite"
+            max_tasks:
+                description: "Number of tasks to attempt"
+                default: "25"
+            model:
+                description: "Model for patching"
+                default: "deepseek"
+
+jobs:
+    learn:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write # To push updated state
+
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.10"
+                  cache: "pip"
+
+            - name: Install dependencies
+              run: |
+                  pip install -r requirements.txt
+                  pip install datasets huggingface_hub
+
+            - name: Restore RFSN State
+              id: restore-state
+              uses: actions/cache@v4
+              with:
+                  path: .rfsn_state
+                  key: rfsn-state-${{ github.run_id }}
+                  restore-keys: |
+                      rfsn-state-
+
+            - name: Download Dataset
+              run: python scripts/download_hf.py
+
+            - name: Run Learning Loop
+              env:
+                  DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+                  RFSN_STRICT_BENCH: "0" # Allow learning on partial data
+              run: |
+                  python scripts/run_learning_loop.py \
+                    --dataset ${{ inputs.dataset || 'swebench_lite' }} \
+                    --max_tasks ${{ inputs.max_tasks || '25' }} \
+                    --model ${{ inputs.model || 'deepseek' }} \
+                    --state_dir .rfsn_state
+
+            - name: Save RFSN State
+              if: always()
+              uses: actions/cache/save@v4
+              with:
+                  path: .rfsn_state
+                  key: rfsn-state-${{ github.run_id }}
+
+            - name: Upload Learning Report
+              uses: actions/upload-artifact@v4
+              with:
+                  name: learning-report
+                  path: .rfsn_state/reports/

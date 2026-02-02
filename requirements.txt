@@ -1,0 +1,8 @@
+# Generated from pyproject.toml on 2026-01-21
+# Core + LLM extras (API)
+python-dotenv>=1.0.1
+fastapi>=0.110.0
+uvicorn>=0.27.0
+websockets>=12.0
+openai>=1.0.0
+google-genai>=0.7.0
