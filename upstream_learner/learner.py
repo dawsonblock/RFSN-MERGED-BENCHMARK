@@ -61,12 +61,12 @@ class UpstreamLearner:
         learner.update(ctx, decision, reward)
     """
 
-    def __init__(self, store: PolicyStore | None = None, d: int = 12) -> None:
+    def __init__(self, store: PolicyStore | None = None, d: int = 15) -> None:
         """Initialize learner.
 
         Args:
             store: Policy storage backend (defaults to file-based)
-            d: Feature dimension (default 12)
+            d: Feature dimension (default 15, includes repair-card features)
         """
         self.store = store or PolicyStore()
         self.d = d

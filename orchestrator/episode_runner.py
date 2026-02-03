@@ -53,6 +53,9 @@ from retrieval.repair_cards import add_card
 # Parallel worktree evaluation
 from orchestrator.worktree_eval import evaluate_candidates_in_parallel
 
+# Stable repo fingerprinting
+from orchestrator.repo_fingerprint import compute_repo_fingerprint
+
 # Global learner instance for cross-task learning
 _learner = SWEBenchLearner()
 _patch_deduper = PatchDeduper()
@@ -480,6 +483,11 @@ def run_one_task(
                     error_type = et
                     break
             
+            # Compute stable fingerprint (based on deps, not commit)
+            repo_fp = compute_repo_fingerprint(ws.path)
+            task["_repo_fp"] = repo_fp
+            task["_bucket"] = bucket
+            
             upstream_ctx = Context(
                 repo=task.get("repo", "unknown"),
                 task_id=instance_id,
@@ -488,7 +496,11 @@ def run_one_task(
                 top_module=task.get("failing_files", [""])[0].split("/")[0] if task.get("failing_files") else "unknown",
                 top_symbol="",
                 test_hint="FAILED" if "FAILED" in (last_out or "").upper() else "ERROR",
-                repo_fingerprint=task.get("base_commit", "")[:12],
+                repo_fingerprint=repo_fp,
+                # Repair-card stats (will be populated after retrieval in propose_v2)
+                rc_k=0,
+                rc_top_score=0.0,
+                rc_top_wr=0.5,
             )
             upstream_decision = _upstream_learner.decide(upstream_ctx)
             logger.info(
@@ -538,8 +550,9 @@ def run_one_task(
                     for c in candidates
                 ]
                 
-                # Derive targeted tests (subset of full test suite)
-                targeted_test_cmd = cmd  # For now, use full test command
+                # Derive targeted tests (subset for fast discard)
+                # Use pytest -x (stop on first fail) for quick filtering
+                targeted_test_cmd = ["python", "-m", "pytest", "-q", "-x", "--tb=short"]
                 full_test_cmd = cmd
                 
                 try:
