@@ -120,7 +120,18 @@ PROCESS:
 3. Find where the code diverges from expectations
 4. Make the fix
 
-Focus on making the test pass, not on what seems "right".""",
+Focus on making the test pass, not on what seems "right".
+
+Your fix MUST be a unified diff that can be applied with `git apply`:
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -LINE,COUNT +LINE,COUNT @@
+ context
+-old line
++new line
+ context
+```""",
         user_prompt_template="""## The Failing Test
 ```python
 {test_code}
@@ -131,12 +142,10 @@ Focus on making the test pass, not on what seems "right".""",
 {test_output}
 ```
 
-## Code Under Test
-```python
+## Code Under Test (with line numbers)
 {file_content}
-```
 
-What does the test expect? What change makes it pass?""",
+What does the test expect? What change makes it pass? Provide a unified diff.""",
         temperature=0.2,
     ),
     
@@ -149,7 +158,18 @@ PROCESS:
 1. List 3 possible causes of the bug
 2. For each, explain what change would fix it
 3. Pick the most likely hypothesis
-4. Propose that fix
+4. Propose that fix as a UNIFIED DIFF
+
+Your fix MUST be a unified diff that can be applied with `git apply`:
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -LINE,COUNT +LINE,COUNT @@
+ context
+-old line
++new line
+ context
+```
 
 Be thorough but decisive.""",
         user_prompt_template="""## Problem
@@ -158,12 +178,10 @@ Be thorough but decisive.""",
 ## Evidence
 {test_output}
 
-## Code
-```python
+## Code (with line numbers)
 {file_content}
-```
 
-List 3 hypotheses, then pick the best and propose a fix.""",
+List 3 hypotheses, pick the best, then provide a unified diff patch.""",
         temperature=0.4,
     ),
     
@@ -178,7 +196,18 @@ RULES:
 3. Try a different strategy if stuck
 4. Be persistent but adaptive
 
-If this is your first attempt, start with the simplest fix.""",
+If this is your first attempt, start with the simplest fix.
+
+Your fix MUST be a unified diff that can be applied with `git apply`:
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -LINE,COUNT +LINE,COUNT @@
+ context
+-old line
++new line
+ context
+```""",
         user_prompt_template="""## Problem
 {problem_statement}
 
@@ -189,12 +218,10 @@ If this is your first attempt, start with the simplest fix.""",
 - Tests: {test_status}
 - Patches applied: {patches_applied}
 
-## Code
-```python
+## Code (with line numbers)
 {file_content}
-```
 
-Based on previous attempts, try a new approach.""",
+Based on previous attempts, try a new approach. Provide a unified diff patch.""",
         temperature=0.3,
     ),
     
@@ -204,19 +231,28 @@ Based on previous attempts, try a new approach.""",
         system_prompt="""You are an experienced developer with access to past bug fixes.
 
 Use the provided similar bugs and their solutions as guidance.
-But adapt the solution to the current context - don't copy blindly.""",
+But adapt the solution to the current context - don't copy blindly.
+
+Your fix MUST be a unified diff that can be applied with `git apply`:
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -LINE,COUNT +LINE,COUNT @@
+ context
+-old line
++new line
+ context
+```""",
         user_prompt_template="""## Current Bug
 {problem_statement}
 
 ## Similar Past Bugs and Fixes
 {similar_memories}
 
-## Current Code
-```python
+## Current Code (with line numbers)
 {file_content}
-```
 
-Use the past examples as guidance to fix this bug.""",
+Use the past examples as guidance to fix this bug. Provide a unified diff.""",
         temperature=0.2,
     ),
     

@@ -1,9 +1,22 @@
+"""LLM Patch Generator with Learning.
+
+Factory for patch-candidate generator with:
+1. Thompson Sampling for prompt variant selection
+2. Cross-attempt feedback (learns from previous failures)
+3. Bandit persistence across runs
+
+The replay avoids any LLM imports/calls for deterministic re-execution.
+"""
 import os
+import logging
 from typing import Any, Optional
+
 from rfsn_controller.replay_trace import (
     TraceWriter, TraceReader,
     make_recording_llm_wrapper, make_replay_llm_wrapper
 )
+
+logger = logging.getLogger(__name__)
 
 _RFSN_RECORD_TRACE = os.environ.get("RFSN_RECORD_TRACE")
 _RFSN_REPLAY_TRACE = os.environ.get("RFSN_REPLAY_TRACE")
@@ -11,76 +24,164 @@ _RFSN_REPLAY_TRACE = os.environ.get("RFSN_REPLAY_TRACE")
 _trace_writer = TraceWriter(_RFSN_RECORD_TRACE, run_meta={"mode": "record"}) if _RFSN_RECORD_TRACE else None
 _trace_reader = TraceReader(_RFSN_REPLAY_TRACE, verify_chain=True) if _RFSN_REPLAY_TRACE else None
 
+
 def get_llm_patch_fn(model_name: str = "deepseek"):
-    """Factory for patch-candidate generator. Replay avoids any LLM imports/calls."""
+    """Factory for patch-candidate generator with learning.
+    
+    Args:
+        model_name: LLM model to use (deepseek/gemini)
+        
+    Returns:
+        Callable that generates patch candidates with learning
+    """
     if _trace_reader is not None:
         return make_replay_llm_wrapper(_trace_reader)
 
     # Lazy import so replay/verification can import this module with LLM disabled.
-    from rfsn_upstream.prompt_variants import get_variant, format_prompt
+    from rfsn_upstream.prompt_variants import get_variant, format_prompt, list_variants
     from rfsn_upstream.llm_prompting import extract_diff_from_response, call_llm, LLMConfig, LLMProvider
+    from rfsn_upstream.bandit import create_bandit
     
+    # Initialize Thompson Sampling bandit for variant selection
+    variant_names = list_variants()
+    bandit = create_bandit(
+        db_path=".rfsn_state/variant_bandit.db",
+        arms=variant_names,
+    )
+    
+    # Track attempts across calls (for feedback loop)
+    # This is reset per-task by episode_runner
+    attempt_history: list[dict[str, Any]] = []
 
     def _generate_patches(plan: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
-        """Default patch generator using upstream prompt variants."""
-        # 1. Select variant (could be bandit-selected in future)
-        variant_name = "v_diagnose_then_patch"
+        """Default patch generator using upstream prompt variants with learning."""
+        nonlocal attempt_history
+        
+        # 1. Select variant using Thompson Sampling
+        # Use v_repair_loop if we have previous attempts
+        if attempt_history:
+            variant_name = "v_repair_loop"  # Force feedback-aware variant on retry
+        else:
+            variant_name = bandit.select_arm()
+            
         variant = get_variant(variant_name)
+        logger.info("Selected variant: %s (attempt %d)", variant_name, len(attempt_history) + 1)
         
         # 2. Build prompt
-        task_info = plan.task if hasattr(plan, "task") else {} # Handle plan object or dict
+        task_info = plan.task if hasattr(plan, "task") else {}
         if not task_info and isinstance(plan, dict):
-             task_info = plan.get("task", {})
+            task_info = plan.get("task", {})
 
         problem_statement = task_info.get("problem_statement", "")
-        # Get file content if available in context or plan
-        # Simplification: assume plan has file context or we rely on what's in 'context'
-        # context['retrieval'] might have useful stuff
         
-        # For now, let's construct a simple context from what we have
-        # Note: The context passed from propose_v2 has hypotheses, retrieval, etc.
-        
-        # Prepare file content structure for the prompt
-        # Note: content already has line numbers prepended by propose_v2
+        # Prepare file content with line numbers
         raw_files = context.get("file_context", {})
         file_content_str = ""
         for path, content in raw_files.items():
             file_content_str += f"\nFile: {path} (line numbers shown on left)\n```python\n{content}\n```\n"
+
+        # Build richer rejection history for multi-turn refinement
+        rejection_history_str = "None"
+        if attempt_history:
+            parts = []
+            for h in attempt_history[-3:]:  # Last 3 attempts (more detail)
+                parts.append(f"""### Attempt {h['attempt']} (variant: {h['variant']})
+**Patch generated:**
+```diff
+{h.get('patch_text', '<none>')[:800]}
+```
+**Result:** {h['result']}
+**Test output (if failed):**
+```
+{h.get('test_output', '')[:500]}
+```
+""")
+            rejection_history_str = "\n".join(parts)
 
         system_prompt, user_prompt = format_prompt(
             variant,
             problem_statement=problem_statement,
             test_output=task_info.get("last_test_output", ""),
             file_content=file_content_str,
+            # v_repair_loop specific context
+            rejection_history=rejection_history_str,
+            test_status="failing",
+            patches_applied=len(attempt_history),
         )
+        
         # 3. Call LLM
         config = LLMConfig(provider=LLMProvider.DEEPSEEK, temperature=variant.temperature)
         response = call_llm(user_prompt, system_prompt=system_prompt, config=config)
 
-        
         content = response.content
         summary = "Generated patch"
         if response.parsed and isinstance(response.parsed, dict):
-             summary = response.parsed.get("summary", summary)
+            summary = response.parsed.get("summary", summary)
         
         # 4. Extract Diff
         patch_text = extract_diff_from_response(content)
         
         # DEBUG: Log what we're extracting
-        import logging
-        debug_logger = logging.getLogger("llm_patcher")
-        debug_logger.info("=" * 60)
-        debug_logger.info("LLM RESPONSE (first 2000 chars):")
-        debug_logger.info(content[:2000] if content else "<empty>")
-        debug_logger.info("=" * 60)
-        debug_logger.info("EXTRACTED PATCH (first 1000 chars):")
-        debug_logger.info(patch_text[:1000] if patch_text else "<none>")
-        debug_logger.info("=" * 60)
+        logger.info("=" * 60)
+        logger.info("LLM RESPONSE (first 2000 chars):")
+        logger.info(content[:2000] if content else "<empty>")
+        logger.info("=" * 60)
+        logger.info("EXTRACTED PATCH (first 1000 chars):")
+        logger.info(patch_text[:1000] if patch_text else "<none>")
+        logger.info("=" * 60)
+        
+        # Record this attempt for feedback loop (including full patch for next attempt)
+        attempt_history.append({
+            "attempt": len(attempt_history) + 1,
+            "variant": variant_name,
+            "summary": summary,
+            "patch_text": patch_text if patch_text else "<no valid patch generated>",
+            "result": "pending",  # Will be updated by update_attempt_result
+            "test_output": "",  # Will be populated by update_attempt_result
+        })
         
         if not patch_text:
-            patch_text = "" # Failed to generate valid patch
+            patch_text = ""  # Failed to generate valid patch
             
-        return [{"patch_text": patch_text, "summary": summary, "metadata": {"model": model_name}}]
+        return [{
+            "patch_text": patch_text, 
+            "summary": summary, 
+            "metadata": {
+                "model": model_name,
+                "variant": variant_name,
+                "attempt": len(attempt_history),
+            }
+        }]
+
+    def update_attempt_result(success: bool, test_output: str = "") -> None:
+        """Update the last attempt with its result and test output for learning."""
+        nonlocal attempt_history
+        
+        if not attempt_history:
+            return
+            
+        last = attempt_history[-1]
+        last["result"] = "PASS" if success else "FAIL"
+        last["test_output"] = test_output[:1000] if not success else ""  # Store test output for failures
+        
+        # Update bandit with outcome
+        bandit.update(last["variant"], success=success)
+        logger.info("Bandit updated: %s -> %s", last["variant"], "success" if success else "failure")
+
+    def reset_attempt_history() -> None:
+        """Reset attempt history for a new task."""
+        nonlocal attempt_history
+        attempt_history = []
+        logger.debug("Attempt history reset")
+        
+    def get_bandit_stats() -> dict[str, Any]:
+        """Get current bandit statistics."""
+        return bandit.export_state()
+
+    # Attach helper methods to the function
+    _generate_patches.update_attempt_result = update_attempt_result  # type: ignore
+    _generate_patches.reset_attempt_history = reset_attempt_history  # type: ignore
+    _generate_patches.get_bandit_stats = get_bandit_stats  # type: ignore
 
     base_fn = _generate_patches
 
@@ -88,8 +189,10 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
         return make_recording_llm_wrapper(base_fn, _trace_writer)
     return base_fn
 
+
 def get_active_trace_writer() -> Optional[TraceWriter]:
     return _trace_writer
+
 
 def get_active_trace_reader() -> Optional[TraceReader]:
     return _trace_reader

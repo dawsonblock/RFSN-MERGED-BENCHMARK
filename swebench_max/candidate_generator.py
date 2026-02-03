@@ -123,20 +123,25 @@ def _call_llm(
             if not api_key:
                 return None
             
+            # Use deepseek-reasoner for better code reasoning
+            model = llm_cfg.get("model", "deepseek-reasoner")
+            
             resp = httpx.post(
                 "https://api.deepseek.com/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},
                 json={
-                    "model": llm_cfg.get("model", "deepseek-chat"),
+                    "model": model,
                     "messages": [{"role": "user", "content": prompt}],
-                    "temperature": planner.temperature,
+                    "temperature": planner.temperature if model != "deepseek-reasoner" else 0,  # reasoner requires temp=0
                     "max_tokens": planner.max_tokens,
                 },
-                timeout=120.0,
+                timeout=300.0,  # Reasoner needs more time
             )
             resp.raise_for_status()
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            # reasoner returns reasoning_content + content; we want the final content
+            return message.get("content", "") or message.get("reasoning_content", "")
         
         elif provider == "openai":
             import openai

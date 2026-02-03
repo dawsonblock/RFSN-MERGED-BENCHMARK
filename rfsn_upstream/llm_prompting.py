@@ -82,10 +82,10 @@ def _get_default_provider() -> LLMProvider:
 def _get_default_model(provider: LLMProvider) -> str:
     """Get the default model for a provider."""
     if provider == LLMProvider.DEEPSEEK:
-        return "deepseek-chat"
+        return "deepseek-reasoner"  # Use R1 for better code reasoning
     if provider == LLMProvider.GEMINI:
         return "gemini-2.0-flash"
-    return "deepseek-chat"
+    return "deepseek-reasoner"
 
 
 def call_llm(
@@ -187,9 +187,18 @@ def _call_deepseek_direct(
         raise RuntimeError("DEEPSEEK_API_KEY not set")
     
     messages = []
-    if system_prompt:
+    # deepseek-reasoner doesn't support system messages, so prepend to user message
+    is_reasoner = "reasoner" in model.lower()
+    if system_prompt and not is_reasoner:
         messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
+    
+    user_content = prompt
+    if system_prompt and is_reasoner:
+        user_content = f"{system_prompt}\n\n{prompt}"
+    messages.append({"role": "user", "content": user_content})
+    
+    # Reasoner requires temperature=0
+    effective_temp = 0 if is_reasoner else temperature
     
     response = httpx.post(
         "https://api.deepseek.com/chat/completions",
@@ -200,14 +209,19 @@ def _call_deepseek_direct(
         json={
             "model": model,
             "messages": messages,
-            "temperature": temperature,
+            "temperature": effective_temp,
             "max_tokens": max_tokens,
         },
-        timeout=120.0,
+        timeout=300.0,  # Reasoner needs more time
     )
+    # DEBUG: Log which model was called
+    import logging
+    logging.getLogger("llm_prompting").info(f"Called DeepSeek model: {model}, temp: {effective_temp}")
     response.raise_for_status()
     data = response.json()
-    return data["choices"][0]["message"]["content"]
+    message = data["choices"][0]["message"]
+    # Reasoner returns reasoning_content + content; we want the final content
+    return message.get("content", "") or message.get("reasoning_content", "")
 
 
 def _call_gemini(
