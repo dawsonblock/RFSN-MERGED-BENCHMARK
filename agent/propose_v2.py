@@ -29,6 +29,13 @@ from retrieval.recall import build_retrieval_context
 from learning.planner_bandit import PlannerSelector, PLANNERS, register_planner
 from planner.planner import generate_plan as planner_v1_generate_plan
 
+# Planner variants for upstream learner routing
+from planner.variants import (
+    planner_traceback_first,
+    planner_api_compat,
+    planner_regression_hunt,
+)
+
 # Multi-layer localization
 try:
     from localize import localize_issue
@@ -69,6 +76,28 @@ logger = logging.getLogger(__name__)
 # Register default planner
 if "planner_v1" not in PLANNERS:
     register_planner("planner_v1", planner_v1_generate_plan)
+
+# Register planner variants for upstream learner routing
+if "planner_traceback_first" not in PLANNERS:
+    register_planner("planner_traceback_first", planner_traceback_first)
+
+if "planner_api_compat" not in PLANNERS:
+    register_planner("planner_api_compat", planner_api_compat)
+
+if "planner_regression_hunt" not in PLANNERS:
+    register_planner("planner_regression_hunt", planner_regression_hunt)
+
+
+def _get_upstream_planner_name(upstream: dict) -> str | None:
+    """Extract planner name from upstream hints (supports multiple key formats)."""
+    if not upstream:
+        return None
+    return (
+        upstream.get("planner")
+        or upstream.get("planner_name")
+        or upstream.get("planner_name_hint")
+    )
+
 
 # Global state
 _selector = PlannerSelector()

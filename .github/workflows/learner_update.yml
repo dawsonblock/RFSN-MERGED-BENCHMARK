@@ -1,75 +1,77 @@
 name: Learner Update
 
 on:
-    workflow_run:
-        workflows: ["Benchmark"]
-        types: [completed]
+  workflow_run:
+    workflows: ["Benchmark SWE-bench MAX"]
+    types: [completed]
 
 jobs:
-    update:
-        if: ${{ github.event.workflow_run.conclusion == 'success' }}
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
+  update:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
-        steps:
-            - uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-            - name: Set up Python
-              uses: actions/setup-python@v5
-              with:
-                  python-version: "3.12"
-                  cache: "pip"
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+          cache: "pip"
 
-            - name: Install deps
-              run: |
-                  pip install -r requirements.txt
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
 
-            - name: Download benchmark artifacts
-              uses: actions/download-artifact@v4
-              with:
-                  run-id: ${{ github.event.workflow_run.id }}
-                  path: artifacts
-              continue-on-error: true
+      - name: Restore policy/state cache
+        uses: actions/cache@v3
+        with:
+          path: .rfsn_state
+          key: rfsn-state-policy
+          restore-keys: |
+            rfsn-state-
 
-            - name: Restore RFSN State cache
-              uses: actions/cache@v4
-              with:
-                  path: .rfsn_state
-                  key: rfsn-state-policy-${{ github.sha }}
-                  restore-keys: |
-                      rfsn-state-policy-
-                      rfsn-state-
+      - name: Download benchmark artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
 
-            - name: Update upstream policy from episodes
-              run: |
-                  # Merge any downloaded episode history with local state
-                  if [ -d "artifacts" ]; then
-                    find artifacts -name "episode_history.jsonl" -exec cat {} >> .rfsn_state/episodes/episode_history.jsonl \;
-                  fi
+      - name: Collect episode history
+        run: |
+          mkdir -p .rfsn_state/episodes
+          # Concatenate all episode_history.jsonl files found in artifacts.
+          found=0
+          while IFS= read -r -d '' f; do
+            echo "Appending: $f"
+            cat "$f" >> .rfsn_state/episodes/episode_history.jsonl
+            echo "" >> .rfsn_state/episodes/episode_history.jsonl
+            found=1
+          done < <(find artifacts -type f -name "episode_history.jsonl" -print0)
 
-                  # Run the policy updater
-                  python -m upstream_learner.update_from_episodes \
-                    --episode_jsonl ".rfsn_state/episodes/episode_history.jsonl" \
-                    --repo_dir "."
+          if [ "$found" -eq 0 ]; then
+            echo "No episode_history.jsonl found in artifacts. Learner update will be a no-op."
+          fi
 
-            - name: Save RFSN State cache
-              uses: actions/cache/save@v4
-              with:
-                  path: .rfsn_state
-                  key: rfsn-state-policy-${{ github.sha }}
+      - name: Update upstream policy from episodes
+        run: |
+          python upstream_learner/update_from_episodes.py \
+            --episode_jsonl ".rfsn_state/episodes/episode_history.jsonl" \
+            --repo_dir "."
 
-            - name: Commit updated policy
-              run: |
-                  git config user.name "rfsn-bot"
-                  git config user.email "rfsn-bot@users.noreply.github.com"
+      - name: Save policy/state cache
+        uses: actions/cache/save@v3
+        with:
+          path: .rfsn_state
+          key: rfsn-state-policy
 
-                  # Create policy directory if needed
-                  mkdir -p .rfsn_state/policy
-
-                  # Add and commit
-                  git add .rfsn_state/policy/upstream_policy.json
-                  git diff --cached --quiet || git commit -m "chore: Update upstream policy from benchmark results"
-                  git push
+      - name: Commit updated policy
+        run: |
+          git config user.name "rfsn-bot"
+          git config user.email "rfsn-bot@users.noreply.github.com"
+          git add .rfsn_state/policy/upstream_policy.json .rfsn_state/episodes/episode_history.jsonl || true
+          git commit -m "Update upstream policy" || echo "No changes"
+          git push || echo "Push failed, may need manual intervention"

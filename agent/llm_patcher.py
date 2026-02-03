@@ -57,10 +57,32 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
         """Default patch generator using upstream prompt variants with learning."""
         nonlocal attempt_history
         
-        # 1. Select variant using Thompson Sampling
-        # Use v_repair_loop if we have previous attempts
-        if attempt_history:
-            variant_name = "v_repair_loop"  # Force feedback-aware variant on retry
+        # --- Prompt variant selection ---
+        # Priority:
+        #   1) upstream forced variant (if valid)
+        #   2) repair-loop variant on retries (if exists)
+        #   3) bandit selection
+        up = {}
+        if isinstance(context, dict):
+            up = (
+                context.get("upstream_hints")
+                or context.get("_upstream_hints")
+                or {}
+            )
+
+        forced = (
+            up.get("prompt_variant")
+            or up.get("variant")
+            or up.get("prompt_variant_name")
+        )
+        forced_flag = False
+
+        if forced and forced in variant_names:
+            variant_name = forced
+            forced_flag = True
+            logger.info("Prompt variant forced by upstream: %s", variant_name)
+        elif attempt_history and "v_repair_loop" in variant_names:
+            variant_name = "v_repair_loop"
         else:
             variant_name = bandit.select_arm()
             
@@ -138,6 +160,8 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
             "patch_text": patch_text if patch_text else "<no valid patch generated>",
             "result": "pending",  # Will be updated by update_attempt_result
             "test_output": "",  # Will be populated by update_attempt_result
+            "forced_variant": forced_flag,  # Track if variant was forced by upstream
+            "upstream_prompt_variant": forced if forced_flag else None,
         })
         
         if not patch_text:
@@ -164,9 +188,12 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
         last["result"] = "PASS" if success else "FAIL"
         last["test_output"] = test_output[:1000] if not success else ""  # Store test output for failures
         
-        # Update bandit with outcome
-        bandit.update(last["variant"], success=success)
-        logger.info("Bandit updated: %s -> %s", last["variant"], "success" if success else "failure")
+        # Do not train prompt-bandit on forced variants (keeps separation: upstream policy vs local bandit)
+        if not last.get("forced_variant", False):
+            bandit.update(last["variant"], success=success)
+            logger.info("Bandit updated: %s -> %s", last["variant"], "success" if success else "failure")
+        else:
+            logger.info("Bandit skipped update (forced variant): %s -> %s", last["variant"], "success" if success else "failure")
 
     def reset_attempt_history() -> None:
         """Reset attempt history for a new task."""
