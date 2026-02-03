@@ -96,7 +96,7 @@ class UpstreamLearner:
         self._ensure_bandits()
 
     def _ensure_bandits(self) -> None:
-        """Ensure all default arms exist in policy."""
+        """Ensure all default arms exist in policy with correct dimensions."""
         b = self.policy["bandits"]
         # Independent heads
         for head, arms in DEFAULT_ARMS.items():
@@ -104,11 +104,21 @@ class UpstreamLearner:
             for a in arms:
                 if a not in hb["arms"]:
                     hb["arms"][a] = LinUCBArm(d=self.d).to_dict()
+                else:
+                    # Check dimension and migrate if needed
+                    stored = hb["arms"][a]
+                    if stored.get("d", 12) != self.d:
+                        # Reinitialize with correct dimension
+                        hb["arms"][a] = LinUCBArm(d=self.d).to_dict()
         # Joint planner+prompt head
         jb = b.setdefault("joint", {"arms": {}})
         for ja in JOINT_ARMS:
             if ja not in jb["arms"]:
                 jb["arms"][ja] = LinUCBArm(d=self.d).to_dict()
+            else:
+                stored = jb["arms"][ja]
+                if stored.get("d", 12) != self.d:
+                    jb["arms"][ja] = LinUCBArm(d=self.d).to_dict()
 
     def save(self) -> None:
         """Persist policy to disk."""
