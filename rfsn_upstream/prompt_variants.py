@@ -72,20 +72,29 @@ Make the minimal fix. Respond with a single JSON proposal.""",
         system_prompt="""You are an expert software debugger. Follow this process:
 
 1. DIAGNOSE: Identify the root cause of the bug
-2. LOCATE: Find the exact line(s) that need to change
-3. PATCH: Write the minimal patch
+2. LOCATE: Find the exact line(s) that need to change - USE THE LINE NUMBERS SHOWN
+3. PATCH: Write the minimal patch in UNIFIED DIFF FORMAT
+
+CRITICAL: The file content includes line numbers on the left (format: "NNNN: code").
+Use these EXACT line numbers in your @@ hunk headers. Do NOT guess or estimate line numbers.
 
 Think step-by-step before proposing a fix.
 
-Respond with your analysis followed by a JSON proposal:
-```json
-{
-    "intent": "modify_file",
-    "target": "path/to/file.py",
-    "patch": "...",
-    "justification": "Root cause: X. Fix: Y",
-    "expected_effect": "Tests will pass because Z"
-}
+Your patch MUST be a valid unified diff that can be applied with `git apply`.
+Example format:
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -242,7 +242,7 @@ def function_name():
+     old_line
+-        line_to_remove
++        line_to_add
+     unchanged_line
+```
+
+Respond with your analysis followed by:
+```diff
+<your unified diff here>
 ```""",
         user_prompt_template="""## Bug Report
 {problem_statement}
@@ -93,12 +102,10 @@ Respond with your analysis followed by a JSON proposal:
 ## Failing Test Output
 {test_output}
 
-## Relevant Code
-```python
+## Relevant Code (with line numbers on left)
 {file_content}
-```
 
-First diagnose the bug, then propose a fix.""",
+First diagnose the bug, then provide a unified diff patch using the EXACT line numbers shown.""",
         temperature=0.3,
     ),
     

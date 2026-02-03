@@ -20,3 +20,5 @@ class Plan:
     steps: List[RepairStep]
     confidence: float
     metadata: Dict[str, Any] = field(default_factory=dict)
+    task: Dict[str, Any] = field(default_factory=dict)  # Original task info
+

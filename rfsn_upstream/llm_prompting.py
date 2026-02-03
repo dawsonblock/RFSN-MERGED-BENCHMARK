@@ -168,26 +168,8 @@ def _call_deepseek(
     temperature: float,
     max_tokens: int,
 ) -> str:
-    """Call DeepSeek API using existing client."""
-    try:
-        from rfsn_controller.llm import call_deepseek
-        
-        # Format messages for the client
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-        
-        response = call_deepseek(
-            messages=messages,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        return response.get("content", "") if isinstance(response, dict) else str(response)
-    except ImportError:
-        # Fallback to direct API call
-        return _call_deepseek_direct(prompt, system_prompt, model, temperature, max_tokens)
+    """Call DeepSeek API using direct HTTP methods."""
+    return _call_deepseek_direct(prompt, system_prompt, model, temperature, max_tokens)
 
 
 def _call_deepseek_direct(
@@ -317,7 +299,7 @@ def extract_diff_from_response(response: str) -> str | None:
     if parsed:
         for key in ["diff", "patch", "unified_diff"]:
             if key in parsed and isinstance(parsed[key], str):
-                return parsed[key]
+                return _normalize_diff(parsed[key])
     
     # Look for diff patterns in text
     diff_patterns = [
@@ -331,13 +313,58 @@ def extract_diff_from_response(response: str) -> str | None:
         if match:
             diff = match.group(1).strip()
             if diff.startswith("---") or diff.startswith("diff --git"):
-                return diff
+                return _normalize_diff(diff)
     
     # Check if the whole response looks like a diff
     if response.strip().startswith("---") or response.strip().startswith("diff --git"):
-        return response.strip()
+        return _normalize_diff(response.strip())
     
     return None
+
+
+def _normalize_diff(diff: str) -> str:
+    """Normalize a diff to ensure proper unified diff format.
+    
+    LLMs often output context lines without leading spaces, which
+    breaks git apply. This function fixes that.
+    
+    Args:
+        diff: Raw diff string
+        
+    Returns:
+        Normalized diff string
+    """
+    lines = diff.split('\n')
+    result = []
+    in_hunk = False
+    
+    for line in lines:
+        # Detect hunk start
+        if line.startswith('@@'):
+            in_hunk = True
+            result.append(line)
+            continue
+        
+        # Headers pass through unchanged
+        if line.startswith('---') or line.startswith('+++') or line.startswith('diff '):
+            result.append(line)
+            continue
+        
+        # Inside a hunk, lines must start with ' ', '+', '-', or '\'
+        if in_hunk:
+            if not line:
+                # Empty line in diff = context line (should be ' ')
+                result.append(' ')
+            elif line[0] in (' ', '+', '-', '\\'):
+                # Already properly formatted
+                result.append(line)
+            else:
+                # Missing leading space - add it (context line)
+                result.append(' ' + line)
+        else:
+            result.append(line)
+    
+    return '\n'.join(result)
 
 
 def build_swebench_prompt(

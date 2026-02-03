@@ -66,5 +66,6 @@ def generate_plan(task: Dict[str, Any], retrieved_memory: Dict[str, Any]) -> Pla
             "source": "planner_v2", 
             "retrieval_count": len(retrieval_hits),
             "hypotheses_count": len(hypotheses)
-        }
+        },
+        task=task  # Store original task for LLM prompting
     )

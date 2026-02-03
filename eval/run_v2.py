@@ -143,7 +143,7 @@ def run_eval(
                 attempts=run_result.attempts,
                 runtime=runtime,
                 status=status,
-                test_output_tail=run_result.test_output[-500:] if run_result.test_output else "",
+                test_output_tail=run_result.test_output[-2000:] if run_result.test_output else "",
                 gate_rejections=getattr(run_result, "gate_rejections", 0),
                 security_violations=getattr(run_result, "security_violations", 0),
             )

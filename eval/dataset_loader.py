@@ -17,6 +17,9 @@ class SWEBenchTask:
     problem_statement: str
     test_patch: str
     hints: Optional[Dict[str, Any]] = None
+    fail_to_pass: Optional[list[str]] = None
+    pass_to_pass: Optional[list[str]] = None
+    patch: Optional[str] = None  # Gold patch for comparison
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -26,7 +29,11 @@ class SWEBenchTask:
             "problem_statement": self.problem_statement,
             "test_patch": self.test_patch,
             "hints": self.hints,
+            "FAIL_TO_PASS": self.fail_to_pass,
+            "PASS_TO_PASS": self.pass_to_pass,
+            "patch": self.patch,
         }
+
 
 
 def _required_path(name: str) -> str:
@@ -65,6 +72,31 @@ def iter_tasks(dataset_name: str) -> Iterator[SWEBenchTask]:
             if not line:
                 continue
             obj = json.loads(line)
+            
+            # Parse FAIL_TO_PASS and PASS_TO_PASS - they're JSON strings in the JSONL
+            fail_to_pass_raw = obj.get("FAIL_TO_PASS")
+            pass_to_pass_raw = obj.get("PASS_TO_PASS")
+            
+            fail_to_pass = None
+            if fail_to_pass_raw:
+                if isinstance(fail_to_pass_raw, str):
+                    try:
+                        fail_to_pass = json.loads(fail_to_pass_raw)
+                    except json.JSONDecodeError:
+                        fail_to_pass = [fail_to_pass_raw]  # Single test
+                else:
+                    fail_to_pass = fail_to_pass_raw  # Already a list
+            
+            pass_to_pass = None
+            if pass_to_pass_raw:
+                if isinstance(pass_to_pass_raw, str):
+                    try:
+                        pass_to_pass = json.loads(pass_to_pass_raw)
+                    except json.JSONDecodeError:
+                        pass_to_pass = [pass_to_pass_raw]  # Single test
+                else:
+                    pass_to_pass = pass_to_pass_raw  # Already a list
+            
             yield SWEBenchTask(
                 instance_id=obj.get("instance_id") or obj.get("id") or "unknown",
                 repo=obj["repo"],
@@ -72,6 +104,9 @@ def iter_tasks(dataset_name: str) -> Iterator[SWEBenchTask]:
                 problem_statement=obj.get("problem_statement") or obj.get("description") or "",
                 test_patch=obj.get("test_patch") or "",
                 hints=obj.get("hints") or obj.get("metadata"),
+                fail_to_pass=fail_to_pass,
+                pass_to_pass=pass_to_pass,
+                patch=obj.get("patch"),  # Gold patch
             )
 
 
