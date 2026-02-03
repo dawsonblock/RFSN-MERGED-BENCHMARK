@@ -1,0 +1,15 @@
+name: Learner Update
+
+on:
+    workflow_run:
+        workflows: ["Benchmark"]
+        types: [completed]
+
+jobs:
+    update:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - name: Update learner
+              run: |
+                  python rfsn_upstream/learner/train_from_logs.py

@@ -1,0 +1,33 @@
+name: Benchmark SWE-bench MAX
+
+on:
+    workflow_dispatch:
+    push:
+        branches: [main]
+
+jobs:
+    swebench_max:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Setup Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - name: Install
+              run: |
+                  python -m pip install -U pip
+                  pip install -r requirements.txt
+                  pip install pyyaml
+
+            - name: Run SWE-bench MAX (stub)
+              run: |
+                  python -m swebench_max.run --repo . --issue_json @datasets/sample_issue.json --cfg configs/swebench_max.yaml | tee swebench_max_report.json
+
+            - name: Upload report
+              uses: actions/upload-artifact@v4
+              with:
+                  name: swebench_max_report
+                  path: swebench_max_report.json

@@ -1,0 +1,7 @@
+This build is valid if and only if:
+
+- rfsn_controller/
+- gate_ext/
+- replay/
+
+exist and run independently.

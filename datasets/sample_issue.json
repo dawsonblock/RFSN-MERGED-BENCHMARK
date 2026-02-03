@@ -1,0 +1,6 @@
+{
+    "task_id": "sample",
+    "repo": "local",
+    "problem_statement": "Fix failing tests for sample task.",
+    "base_commit": "HEAD"
+}
