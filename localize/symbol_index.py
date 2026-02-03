@@ -53,6 +53,8 @@ class SymbolIndex:
         self.symbols: Dict[str, List[Symbol]] = defaultdict(list)
         self.imports: List[ImportRelation] = []
         self.call_graph: Dict[str, Set[str]] = defaultdict(set)
+        # Inheritance: class_name -> list of parent class names
+        self.class_bases: Dict[str, List[str]] = defaultdict(list)
     
     def build(self, repo_dir: Path) -> None:
         """Build symbol index for repository.
@@ -172,6 +174,21 @@ class SymbolIndex:
                 method="symbol_definition",
             )
             hits.append(hit)
+            
+            # If it's a class, also include parent class files
+            if symbol.kind == "class":
+                parent_files = self.resolve_inheritance_chain(symbol_name)
+                for parent_file, parent_name in parent_files:
+                    if parent_file != symbol.file_path:  # Avoid duplicates
+                        parent_hit = LocalizationHit(
+                            file_path=parent_file,
+                            line_start=1,
+                            line_end=1,
+                            score=0.85,  # High score for parent classes
+                            evidence=f"Parent class {parent_name} of {symbol_name}",
+                            method="inheritance_chain",
+                        )
+                        hits.append(parent_hit)
         
         # Files that call this symbol
         callers = self.find_callers(symbol_name)
@@ -187,6 +204,41 @@ class SymbolIndex:
             hits.append(hit)
         
         return hits
+    
+    def resolve_inheritance_chain(self, class_name: str, visited: set = None) -> List[tuple]:
+        """Resolve full inheritance chain for a class.
+        
+        Args:
+            class_name: Class name to resolve
+            visited: Set of already-visited class names (for cycle detection)
+            
+        Returns:
+            List of (file_path, parent_class_name) tuples for all ancestor classes
+        """
+        if visited is None:
+            visited = set()
+        
+        if class_name in visited:
+            return []  # Avoid infinite loops
+        
+        visited.add(class_name)
+        results = []
+        
+        # Get direct parent classes
+        parent_names = self.class_bases.get(class_name, [])
+        
+        for parent_name in parent_names:
+            # Find where parent class is defined
+            parent_symbols = self.find_symbol(parent_name)
+            
+            for parent_sym in parent_symbols:
+                if parent_sym.kind == "class":
+                    results.append((parent_sym.file_path, parent_name))
+                    
+                    # Recursively resolve grandparent classes
+                    results.extend(self.resolve_inheritance_chain(parent_name, visited))
+        
+        return results
     
     def _try_ctags(self, repo_dir: Path) -> bool:
         """Try to build index using ctags.
@@ -251,8 +303,8 @@ class SymbolIndex:
         Args:
             repo_dir: Repository root directory
         """
-        # Patterns for Python
-        class_pattern = re.compile(r'^\s*class\s+(\w+)')
+        # Patterns for Python - now capturing parent classes
+        class_pattern = re.compile(r'^\s*class\s+(\w+)(?:\s*\(([^)]+)\))?\s*:')
         func_pattern = re.compile(r'^\s*def\s+(\w+)\s*\(')
         
         for py_file in repo_dir.rglob("*.py"):
@@ -268,13 +320,23 @@ class SymbolIndex:
                         # Check for class
                         match = class_pattern.match(line)
                         if match:
+                            class_name = match.group(1)
                             symbol = Symbol(
-                                name=match.group(1),
+                                name=class_name,
                                 kind="class",
                                 file_path=rel_path,
                                 line_number=line_num,
                             )
                             self.symbols[symbol.name].append(symbol)
+                            
+                            # Extract parent class names
+                            bases_str = match.group(2)
+                            if bases_str:
+                                # Parse comma-separated bases, strip whitespace
+                                bases = [b.strip().split('.')[-1] for b in bases_str.split(',')]
+                                # Filter out things like metaclass=..., **kwargs
+                                bases = [b for b in bases if b and '=' not in b and b != 'object']
+                                self.class_bases[class_name].extend(bases)
                         
                         # Check for function
                         match = func_pattern.match(line)

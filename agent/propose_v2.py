@@ -125,7 +125,7 @@ def _retrieve_file_content(
     file_path: str, 
     with_line_numbers: bool = True,
     window_lines: list[int] | None = None,
-    window_size: int = 50,
+    window_size: int = 100,
 ) -> str:
     """Safely read a file from the workspace, optionally with windowing.
     
@@ -200,10 +200,10 @@ def _retrieve_file_content(
         # No windowing - return full file (with optional size limit)
         if with_line_numbers:
             # Limit to 500 lines max to avoid context overflow
-            if total_lines > 500:
-                logger.info("File %s has %d lines, showing first 500", file_path, total_lines)
-                all_lines = all_lines[:500]
-                all_lines.append(f"... ({total_lines - 500} more lines omitted) ...")
+            if total_lines > 800:
+                logger.info("File %s has %d lines, showing first 800", file_path, total_lines)
+                all_lines = all_lines[:800]
+                all_lines.append(f"... ({total_lines - 800} more lines omitted) ...")
             numbered_lines = [f"{i+1:4d}: {line}" for i, line in enumerate(all_lines)]
             return '\n'.join(numbered_lines)
         return '\n'.join(all_lines)

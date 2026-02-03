@@ -181,6 +181,16 @@ def install_deps(repo_path: str) -> None:
         # Patch table init to handle circular imports
         _patch_astropy_table_init(repo_path)
         
+        # Patch table/operations.py to handle _np_utils circular import
+        _patch_astropy_table_operations(repo_path)
+        
+        # Patch io/ascii module for Table import issues
+        _patch_astropy_io_ascii_init(repo_path)
+        _patch_astropy_io_ascii_connect(repo_path)
+        
+        # Patch logger.py to handle config access failures
+        _patch_astropy_logger(repo_path)
+        
         # Install test dependencies (including pytest-doctestplus for astropy's setup.cfg)
         _run(["pip", "install", "hypothesis", "pytest", "pytest-doctestplus", "pytest-astropy", "--quiet"], cwd=repo_path, timeout_s=120)
         logger.info("ASTROPY: Setup complete")
@@ -621,6 +631,201 @@ def _patch_astropy_table_init(repo_path: str) -> bool:
         return False
 
 
+def _patch_astropy_table_operations(repo_path: str) -> bool:
+    """
+    Patch astropy/table/operations.py to handle _np_utils circular import.
+    
+    The import `from . import _np_utils` at the top triggers circular import
+    when Table is imported early. We defer this import inside functions.
+    
+    Returns True if patching was successful, False otherwise.
+    """
+    ops_path = os.path.join(repo_path, "astropy", "table", "operations.py")
+    if not os.path.exists(ops_path):
+        return False
+    
+    try:
+        with open(ops_path, encoding="utf-8") as f:
+            content = f.read()
+        
+        # Already patched
+        if "# RFSN PATCHED" in content:
+            return True
+        
+        # Wrap the _np_utils import in try/except
+        if "from . import _np_utils" in content:
+            content = content.replace(
+                "from . import _np_utils",
+                "try:  # RFSN: wrapped for circular import safety\n    from . import _np_utils\nexcept ImportError:\n    _np_utils = None  # RFSN: fallback"
+            )
+            
+            # Add RFSN header
+            content = "# RFSN PATCHED: Wrapped _np_utils import for circular import safety\n" + content
+            
+            with open(ops_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("ASTROPY: Patched table/operations.py (_np_utils import)")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug("Failed to patch astropy table operations: %s", e)
+        return False
+
+
+def _patch_astropy_io_ascii_init(repo_path: str) -> bool:
+    """
+    Patch astropy/io/ascii/__init__.py to handle Table import issues.
+    
+    The io/ascii module imports Table at module level, but this triggers
+    circular imports in older astropy versions. We wrap problematic imports.
+    
+    Returns True if patching was successful, False otherwise.
+    """
+    ascii_init_path = os.path.join(repo_path, "astropy", "io", "ascii", "__init__.py")
+    if not os.path.exists(ascii_init_path):
+        return False
+    
+    try:
+        with open(ascii_init_path, encoding="utf-8") as f:
+            content = f.read()
+        
+        # Already patched
+        if "# RFSN PATCHED" in content:
+            return True
+        
+        modified = False
+        
+        # Wrap connect import
+        if "from . import connect" in content and "try:" not in content.split("from . import connect")[0][-50:]:
+            content = content.replace(
+                "from . import connect",
+                "try:  # RFSN: wrapped for circular import safety\n    from . import connect\nexcept ImportError:\n    pass  # RFSN: circular import fallback"
+            )
+            modified = True
+        
+        if modified:
+            content = "# RFSN PATCHED: Wrapped imports for circular import safety\n" + content
+            with open(ascii_init_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("ASTROPY: Patched io/ascii/__init__.py")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug("Failed to patch astropy io/ascii init: %s", e)
+        return False
+
+
+def _patch_astropy_io_ascii_connect(repo_path: str) -> bool:
+    """
+    Patch astropy/io/ascii/connect.py to defer Table import.
+    
+    Line 8 has `from astropy.table import Table` which triggers the circular
+    import chain. We move this import to inside functions that use it.
+    
+    Returns True if patching was successful, False otherwise.
+    """
+    connect_path = os.path.join(repo_path, "astropy", "io", "ascii", "connect.py")
+    if not os.path.exists(connect_path):
+        return False
+    
+    try:
+        with open(connect_path, encoding="utf-8") as f:
+            content = f.read()
+        
+        # Already patched
+        if "# RFSN PATCHED" in content:
+            return True
+        
+        modified = False
+        
+        # Wrap the Table import at module level
+        if "from astropy.table import Table" in content:
+            content = content.replace(
+                "from astropy.table import Table",
+                "try:  # RFSN: wrapped for circular import safety\n    from astropy.table import Table\nexcept ImportError:\n    Table = None  # RFSN: deferred import"
+            )
+            modified = True
+        
+        if modified:
+            content = "# RFSN PATCHED: Wrapped Table import for circular import safety\n" + content
+            with open(connect_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("ASTROPY: Patched io/ascii/connect.py (Table import)")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug("Failed to patch astropy io/ascii/connect.py: %s", e)
+        return False
+
+
+def _patch_astropy_logger(repo_path: str) -> bool:
+    """
+    Patch astropy/logger.py to handle config access failures.
+    
+    In some old astropy versions, logger._set_defaults() tries to access
+    conf.log_level before conf is properly initialized. We wrap this in try/except.
+    
+    Returns True if patching was successful, False otherwise.
+    """
+    logger_path = os.path.join(repo_path, "astropy", "logger.py")
+    if not os.path.exists(logger_path):
+        return False
+    
+    try:
+        with open(logger_path, encoding="utf-8") as f:
+            content = f.read()
+        
+        # Already patched
+        if "# RFSN PATCHED" in content:
+            return True
+        
+        modified = False
+        
+        # Wrap the _set_defaults call - detect indentation dynamically
+        import re
+        match = re.search(r'^( *)log\._set_defaults\(\)', content, re.MULTILINE)
+        if match and "try:  # RFSN" not in content:
+            indent = match.group(1)  # e.g. 8 spaces
+            old_line = match.group(0)  # full line including indent
+            new_block = (
+                f"{indent}try:  # RFSN: wrapped for config access safety\n"
+                f"{indent}    log._set_defaults()\n"
+                f"{indent}except Exception:\n"
+                f"{indent}    pass  # RFSN: config not ready yet"
+            )
+            content = content.replace(old_line, new_block)
+            modified = True
+        
+        # Wrap setLevel with conf.log_level (detect indentation dynamically)
+        match2 = re.search(r'^( *)self\.setLevel\(conf\.log_level\)', content, re.MULTILINE)
+        if match2 and "try:  # RFSN" not in content.split("self.setLevel(conf.log_level)")[0][-100:]:
+            indent = match2.group(1)
+            old_line = match2.group(0)
+            new_block = (
+                f"{indent}try:  # RFSN: wrapped for config access safety\n"
+                f"{indent}    self.setLevel(conf.log_level)\n"
+                f"{indent}except Exception:\n"
+                f"{indent}    self.setLevel('WARNING')  # RFSN: fallback"
+            )
+            content = content.replace(old_line, new_block)
+            modified = True
+        
+        if modified:
+            content = "# RFSN PATCHED: Wrapped config access for safety\n" + content
+            with open(logger_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("ASTROPY: Patched logger.py (config access)")
+            return True
+        
+        return False
+    except Exception as e:
+        logger.debug("Failed to patch astropy logger: %s", e)
+        return False
+
+
 def _patch_astropy_conftest(repo_path: str) -> bool:
     """
     Patch astropy/conftest.py to wrap failing imports in try/except.
@@ -695,6 +900,10 @@ def hard_reset_clean(ws: RepoWorkspace) -> None:
         _patch_astropy_modeling_init(ws.path)
         _patch_astropy_column_mixins(ws.path)
         _patch_astropy_table_init(ws.path)
+        _patch_astropy_table_operations(ws.path)
+        _patch_astropy_io_ascii_init(ws.path)
+        _patch_astropy_io_ascii_connect(ws.path)
+        _patch_astropy_logger(ws.path)
 
 
 def apply_patch_text(ws: RepoWorkspace, patch_text: str) -> str:
