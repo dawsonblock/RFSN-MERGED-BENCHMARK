@@ -43,7 +43,7 @@ class LLMConfig:
     provider: LLMProvider = LLMProvider.AUTO
     model: str = ""  # Empty = use default for provider
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 8192
     timeout: int = 120
     max_retries: int = 3
     retry_delay: float = 2.0
@@ -298,6 +298,7 @@ def extract_diff_from_response(response: str) -> str | None:
     - Raw unified diff
     - Diff in code blocks
     - JSON with 'diff' or 'patch' field
+    - Truncated diffs without closing backticks
     
     Args:
         response: Raw LLM response text
@@ -315,23 +316,58 @@ def extract_diff_from_response(response: str) -> str | None:
             if key in parsed and isinstance(parsed[key], str):
                 return _normalize_diff(parsed[key])
     
-    # Look for diff patterns in text
+    # Look for diff patterns in text (order matters - try most specific first)
     diff_patterns = [
+        # Standard code blocks with closing backticks
         r"```diff\s*([\s\S]*?)\s*```",
         r"```patch\s*([\s\S]*?)\s*```",
+        # Diffs without code blocks but with proper headers
         r"(---\s+a/.*?\n\+\+\+\s+b/.*?\n@@[\s\S]*?)(?=\n```|$)",
+        # git diff format in code block
+        r"```\s*(diff --git[\s\S]*?)\s*```",
+        # Truncated code blocks (no closing backticks - common LLM issue)
+        r"```diff\s*([\s\S]*?)(?=\n##|\n\*\*|$)",
+        r"```patch\s*([\s\S]*?)(?=\n##|\n\*\*|$)",
+        # Bare diffs starting with --- that extend to end
+        r"(---\s+a/[^\n]+\n\+\+\+\s+b/[^\n]+\n@@[^\n]+@@[\s\S]+?)(?=\n\n\*\*|\n\n##|$)",
     ]
     
     for pattern in diff_patterns:
         match = re.search(pattern, response)
         if match:
             diff = match.group(1).strip()
-            if diff.startswith("---") or diff.startswith("diff --git"):
-                return _normalize_diff(diff)
+            # Validate it looks like a diff
+            if (diff.startswith("---") or diff.startswith("diff --git") or 
+                "@@" in diff[:500]):  # Has hunk header
+                normalized = _normalize_diff(diff)
+                if normalized and ("---" in normalized or "@@" in normalized):
+                    return normalized
     
     # Check if the whole response looks like a diff
-    if response.strip().startswith("---") or response.strip().startswith("diff --git"):
-        return _normalize_diff(response.strip())
+    stripped = response.strip()
+    if stripped.startswith("---") or stripped.startswith("diff --git"):
+        return _normalize_diff(stripped)
+    
+    # Last resort: find any line that looks like a diff start and extract from there
+    lines = response.split('\n')
+    for i, line in enumerate(lines):
+        if line.startswith("--- a/") or line.startswith("diff --git"):
+            # Extract from here to end or until we hit non-diff content
+            diff_lines = []
+            for j in range(i, len(lines)):
+                l = lines[j]
+                # Stop at obvious non-diff content
+                if l.startswith("```") and not l.startswith("```diff"):
+                    break
+                if l.startswith("**") and ":" in l:  # Markdown bold heading
+                    break
+                if l.startswith("## "):  # Markdown header
+                    break
+                diff_lines.append(l)
+            if diff_lines:
+                candidate = '\n'.join(diff_lines).strip()
+                if "@@" in candidate:  # Has at least one hunk
+                    return _normalize_diff(candidate)
     
     return None
 
@@ -398,12 +434,17 @@ def build_swebench_prompt(
     Returns:
         Formatted prompt string
     """
-    # Build files context
+    # Build files context with line numbers for precise targeting
     files_context = ""
     for f in relevant_files:
         path = f.get("path", "unknown")
         content = f.get("content", "")
-        files_context += f"\n[{path}]\n{content}\n"
+        # Add line numbers to help LLM target exact lines
+        numbered_lines = []
+        for i, line in enumerate(content.split('\n'), 1):
+            numbered_lines.append(f"{i}: {line}")
+        numbered_content = '\n'.join(numbered_lines)
+        files_context += f"\n[{path}]\n{numbered_content}\n"
     
     # Build memories context
     memories_context = ""

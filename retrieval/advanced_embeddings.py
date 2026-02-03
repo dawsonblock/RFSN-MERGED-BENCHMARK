@@ -41,6 +41,32 @@ except ImportError:
     torch = None  # type: ignore
 
 
+# Log dependency status at module load
+def _log_embedding_dependencies() -> None:
+    """Log embedding dependency status with install suggestions."""
+    missing = []
+    
+    if not HAS_NUMPY:
+        missing.append("numpy")
+    if not HAS_FAISS:
+        missing.append("faiss-cpu (IVF indexing)")
+    if not HAS_TRANSFORMERS:
+        missing.append("transformers torch (CodeBERT)")
+    
+    if missing:
+        logger.warning(
+            f"Embedding dependencies missing: {', '.join(missing)}\n"
+            "Using fallback hash embeddings (lower quality).\n"
+            "Install for semantic search:\n"
+            "  pip install numpy transformers torch faiss-cpu"
+        )
+    else:
+        logger.info("All embedding dependencies available (numpy, transformers, torch, faiss)")
+
+
+_log_embedding_dependencies()
+
+
 @dataclass
 class EmbeddingConfig:
     """Configuration for the advanced embedding layer."""

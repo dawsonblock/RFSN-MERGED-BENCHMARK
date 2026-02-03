@@ -22,6 +22,30 @@ from rfsn_controller.structured_logging import get_logger
 logger = get_logger(__name__)
 
 
+# Check ripgrep availability at module load
+def _check_ripgrep_available() -> bool:
+    """Check if ripgrep (rg) is installed and provide guidance if not."""
+    try:
+        result = subprocess.run(["rg", "--version"], capture_output=True, timeout=5)
+        return result.returncode == 0
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+RIPGREP_AVAILABLE = _check_ripgrep_available()
+
+if not RIPGREP_AVAILABLE:
+    logger.warning(
+        "ripgrep (rg) not found. Falling back to slower Python search.\n"
+        "Install ripgrep for 10-100x faster lexical localization:\n"
+        "  macOS:  brew install ripgrep\n"
+        "  Ubuntu: sudo apt-get install ripgrep\n"
+        "  Other:  https://github.com/BurntSushi/ripgrep#installation"
+    )
+else:
+    logger.debug("ripgrep available for fast lexical search")
+
+
 @dataclass
 class RipgrepConfig:
     """Configuration for ripgrep search."""

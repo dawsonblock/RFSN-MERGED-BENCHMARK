@@ -424,7 +424,7 @@ def build_upstream_context(
                 content = _retrieve_file_content(
                     workspace_root, fpath, 
                     window_lines=error_lines,
-                    window_size=50  # ±50 lines around each error
+                    window_size=100  # ±100 lines around each error for better context
                 )
                 logger.info("FILE_CONTEXT: Retrieved %s windowed around lines %s (%d lines)", 
                            fpath, error_lines[:3], content.count('\\n') + 1)

@@ -24,7 +24,7 @@ class PromptVariant:
     system_prompt: str
     user_prompt_template: str
     temperature: float = 0.2
-    max_tokens: int = 4096
+    max_tokens: int = 8192  # Higher limit for reasoning models
     metadata: dict[str, Any] | None = None
 
 
@@ -258,31 +258,40 @@ Use the past examples as guidance to fix this bug. Provide a unified diff.""",
     
     "v_chain_of_thought": PromptVariant(
         name="v_chain_of_thought",
-        description="Explicit reasoning chain before action",
-        system_prompt="""You are a methodical software engineer. Think out loud.
+        description="Reasoning then patch - output diff early",
+        system_prompt="""You are a methodical software engineer.
 
-For every action, explain your reasoning:
-1. What is the symptom?
-2. What could cause this?
-3. Where should I look?
-4. What change would fix it?
-5. Why is this the right fix?
+CRITICAL: To avoid response truncation, output your patch EARLY in your response.
 
-Only after reasoning, propose your fix.""",
+Format your response as:
+## Step-by-step reasoning
+[Brief analysis]
+
+## Proposed Fix
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -LINE,COUNT +LINE,COUNT @@
+ context
+-old line
++new line
+ context
+```
+
+## Explanation
+[Why this fix works]""",
         user_prompt_template="""## Bug Report
 {problem_statement}
 
 ## Test Output
 {test_output}
 
-## Code
-```python
+## Code (with line numbers on left)
 {file_content}
-```
 
-Think step by step, then propose a fix.""",
+Briefly analyze, then OUTPUT THE DIFF IMMEDIATELY, then explain.""",
         temperature=0.2,
-        max_tokens=6000,
+        max_tokens=8192,
     ),
 }
 

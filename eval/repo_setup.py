@@ -178,6 +178,9 @@ def install_deps(repo_path: str) -> None:
         # Create stub _column_mixins.py to allow table imports  
         _patch_astropy_column_mixins(repo_path)
         
+        # Patch table init to handle circular imports
+        _patch_astropy_table_init(repo_path)
+        
         # Install test dependencies (including pytest-doctestplus for astropy's setup.cfg)
         _run(["pip", "install", "hypothesis", "pytest", "pytest-doctestplus", "pytest-astropy", "--quiet"], cwd=repo_path, timeout_s=120)
         logger.info("ASTROPY: Setup complete")
@@ -537,6 +540,87 @@ class _MaskedColumnGetitemShim:
         return False
 
 
+def _patch_astropy_table_init(repo_path: str) -> bool:
+    """
+    Patch astropy/table/__init__.py to handle circular import issues.
+    
+    Old astropy versions have circular import issues when importing
+    pprint, connect, scripts etc. from the table module. This wraps
+    ONLY simple single-line imports in try/except blocks.
+    
+    Multi-line imports like `from .X import (a, b, c)` are SKIPPED
+    to avoid syntax errors.
+    
+    Returns True if patching was successful, False otherwise.
+    """
+    table_init_path = os.path.join(repo_path, "astropy", "table", "__init__.py")
+    if not os.path.exists(table_init_path):
+        return False
+    
+    try:
+        with open(table_init_path, encoding="utf-8") as f:
+            content = f.read()
+        
+        # Already patched
+        if "# RFSN PATCHED" in content:
+            return True
+        
+        # Add header
+        patched_content = "# RFSN PATCHED: Wrapped single-line imports for circular import safety\n"
+        
+        # Problematic import prefixes (only wrap if line is self-contained)
+        problematic_prefixes = [
+            "from .pprint import",
+            "from .connect import",
+            "from .scripts import",
+            "from .serialize import",
+        ]
+        
+        lines = content.split('\n')
+        result_lines = []
+        in_multiline = False  # Track if inside parenthesized import
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Track multi-line imports: starts with ( but doesn't close on same line
+            if '(' in stripped and ')' not in stripped:
+                in_multiline = True
+                result_lines.append(line)
+                continue
+            
+            # End of multi-line import
+            if in_multiline:
+                result_lines.append(line)
+                if ')' in stripped:
+                    in_multiline = False
+                continue
+            
+            # Check if this is a simple problematic import (single line, no continuation)
+            is_problematic = any(stripped.startswith(p) for p in problematic_prefixes)
+            is_single_line = not stripped.endswith('\\') and '(' not in stripped
+            is_not_comment = not stripped.startswith("#")
+            
+            if is_problematic and is_single_line and is_not_comment:
+                # Wrap in try/except
+                result_lines.append(f"try:  # RFSN: wrapped for circular import safety")
+                result_lines.append(f"    {line}")
+                result_lines.append(f"except ImportError:")
+                result_lines.append(f"    pass  # RFSN: circular import fallback")
+            else:
+                result_lines.append(line)
+        
+        patched_content += '\n'.join(result_lines)
+        
+        with open(table_init_path, "w", encoding="utf-8") as f:
+            f.write(patched_content)
+        logger.info("ASTROPY: Patched table/__init__.py (single-line imports only)")
+        return True
+    except Exception as e:
+        logger.debug("Failed to patch astropy table init: %s", e)
+        return False
+
+
 def _patch_astropy_conftest(repo_path: str) -> bool:
     """
     Patch astropy/conftest.py to wrap failing imports in try/except.
@@ -610,6 +694,7 @@ def hard_reset_clean(ws: RepoWorkspace) -> None:
         _patch_astropy_conftest(ws.path)
         _patch_astropy_modeling_init(ws.path)
         _patch_astropy_column_mixins(ws.path)
+        _patch_astropy_table_init(ws.path)
 
 
 def apply_patch_text(ws: RepoWorkspace, patch_text: str) -> str:
