@@ -37,7 +37,7 @@ worktrees:
 cache:
   enabled: true
   dir: ".rfsn_cache"
-  ttl_seconds: 259200  # 3 days
+  ttl_seconds: 259200 # 3 days
 
 # Safety "do not propose"
 forbid_paths_prefix:
@@ -50,3 +50,34 @@ forbid_paths_prefix:
 diff_limits:
   max_files: 8
   max_lines: 400
+
+# LLM Providers for planners
+llms:
+  default:
+    provider: openai
+    model: gpt-4o-mini
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.25
+    max_tokens: 2400
+    timeout_s: 120
+
+  primary:
+    provider: openai
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.2
+    max_tokens: 2600
+
+  alt:
+    provider: anthropic
+    model: claude-3-5-sonnet-latest
+    api_key_env: ANTHROPIC_API_KEY
+    temperature: 0.25
+    max_tokens: 2600
+
+  skeptic:
+    provider: openai
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    temperature: 0.15
+    max_tokens: 2200

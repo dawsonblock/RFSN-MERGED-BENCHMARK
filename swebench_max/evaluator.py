@@ -6,6 +6,7 @@ from typing import Dict, Any, List, Optional, Tuple
 from swebench_max.candidate import Candidate
 from swebench_max.diff_stats import compute_diff_stats
 from swebench_max.targeted_tests import targeted_tests
+from swebench_max.targeted_tests_v2 import targeted_tests_v2
 from swebench_max.static_risk import static_risk_score
 
 @dataclass
@@ -65,7 +66,24 @@ def evaluate_candidate(
     ok_compile, _ = _run_shell(cfg["tests"]["smoke_cmd"], repo_root, timeout=600)
     ok_unit_smoke, _ = _run_shell(cfg["tests"]["unit_smoke_cmd"], repo_root, timeout=900)
 
-    tgt_cmds = targeted_tests(diff, repo_root, cfg["tests"]["targeted_max"])
+    # Use v2 if failures text available, fallback to v1
+    failures_text = ""
+    try:
+        failures_text = str(cand.meta.get("failures", "") or "")
+    except Exception:
+        failures_text = ""
+
+    if failures_text.strip():
+        tgt_cmds = targeted_tests_v2(
+            diff=diff,
+            repo_root=repo_root,
+            failures_text=failures_text,
+            limit=cfg["tests"]["targeted_max"],
+            import_depth=2,
+        )
+    else:
+        tgt_cmds = targeted_tests(diff, repo_root, cfg["tests"]["targeted_max"])
+
     tp = 0
     tf = 0
     for c in tgt_cmds:
@@ -74,6 +92,16 @@ def evaluate_candidate(
             tp += 1
         else:
             tf += 1
+
+    # Optional: full tests if close
+    if cfg["tests"].get("full_if_close", False):
+        # close if compile+unit_smoke pass and targeted failures <= 1
+        if ok_compile and ok_unit_smoke and tf <= 1 and (tp + tf) > 0:
+            ok_full, _ = _run_shell("pytest -q", repo_root, timeout=1800)
+            if ok_full:
+                tp += 1  # small deterministic bump
+            else:
+                tf += 1
 
     # Weighted score
     w = cfg["ranker"]
