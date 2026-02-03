@@ -50,6 +50,9 @@ from upstream_learner.update_from_episodes import score_reward
 # Repair cards for similar-fix memory
 from retrieval.repair_cards import add_card
 
+# Parallel worktree evaluation
+from orchestrator.worktree_eval import evaluate_candidates_in_parallel
+
 # Global learner instance for cross-task learning
 _learner = SWEBenchLearner()
 _patch_deduper = PatchDeduper()
@@ -527,57 +530,80 @@ def run_one_task(
 
             # PARALLEL MODE: Test multiple candidates concurrently in worktrees
             if use_parallel and len(candidates) > 1:
-                logger.info("Using parallel evaluation for %d candidates", len(candidates))
-                parallel_results = _evaluate_candidates_parallel(
-                    candidates=candidates,
-                    repo_root=ws.path,
-                    test_cmd=cmd,
-                    test_patch=test_patch,
-                    max_parallel=3,
-                )
+                logger.info("Using parallel worktree evaluation for %d candidates", len(candidates))
                 
-                # Process parallel results
-                for cand, passed, out, rt in parallel_results:
-                    if passed:
+                # Convert PatchCandidate objects to dicts for worktree_eval
+                cand_dicts = [
+                    {"patch": c.patch_text, "diff": c.patch_text, "summary": c.summary, "metadata": c.metadata}
+                    for c in candidates
+                ]
+                
+                # Derive targeted tests (subset of full test suite)
+                targeted_test_cmd = cmd  # For now, use full test command
+                full_test_cmd = cmd
+                
+                try:
+                    best_idx, results, best_workdir = evaluate_candidates_in_parallel(
+                        base_repo=ws.path,
+                        base_ref="HEAD",
+                        candidates=cand_dicts,
+                        targeted_test_cmd=targeted_test_cmd,
+                        full_test_cmd=full_test_cmd,
+                        max_workers=min(3, len(candidates)),
+                        keep_best_worktree=False,  # Don't keep; we'll re-apply in main repo
+                    )
+                    
+                    if best_idx is not None:
                         # Found a winner in parallel mode!
-                        logger.info("PASS (parallel): %s on attempt %d", instance_id, attempts)
-                        
-                        patch_size = len(cand.get("patch_text", ""))
-                        from_lines = set()
-                        for line in cand.get("patch_text", "").split('\n'):
-                            if line.startswith('---') or line.startswith('+++'):
-                                from_lines.add(line)
-                        files_touched = len(from_lines)
-                        baseline_failures = _parse_failure_count(last_out_baseline)
-                        final_failures = _parse_failure_count(out)
-                        delta = baseline_failures - final_failures
-                        
-                        res = RunResult(
-                            passed=True,
-                            test_output=out[:5000],
-                            attempts=attempts,
-                            gate_rejections=gate_rejections,
-                            security_violations=security_count,
-                            test_delta=delta,
-                            runtime=rt,
-                            patch_size=patch_size,
-                            files_touched=files_touched,
-                        )
-                        
-                        # Record success
-                        failure_index.add(FailureRecord(
-                            repo=task.get("repo", "unknown"),
-                            signature=(task.get("problem_statement", "") or "")[:2000],
-                            patch_summary=cand.get("summary", ""),
-                            metadata={"instance_id": instance_id, "mode": "parallel"},
-                        ))
-                        
-                        if record_callback:
-                            record_callback(res)
-                        return res
-                    else:
-                        # Record failure for learning
-                        last_out = out
+                        best_result = next((r for r in results if r.idx == best_idx), None)
+                        if best_result and best_result.ok_full:
+                            cand = candidates[best_idx]
+                            logger.info("PASS (parallel worktree): %s on attempt %d", instance_id, attempts)
+                            
+                            patch_size = best_result.patch_size
+                            files_touched = best_result.files_touched
+                            rt = best_result.runtime_s
+                            out = best_result.full_out or best_result.targeted_out
+                            
+                            baseline_failures = _parse_failure_count(last_out_baseline)
+                            final_failures = _parse_failure_count(out)
+                            delta = baseline_failures - final_failures
+                            
+                            res = RunResult(
+                                passed=True,
+                                test_output=out[:5000],
+                                attempts=attempts,
+                                gate_rejections=gate_rejections,
+                                security_violations=security_count,
+                                test_delta=delta,
+                                runtime=rt,
+                                patch_size=patch_size,
+                                files_touched=files_touched,
+                            )
+                            
+                            # Record success
+                            failure_index.add(FailureRecord(
+                                repo=task.get("repo", "unknown"),
+                                signature=(task.get("problem_statement", "") or "")[:2000],
+                                patch_summary=cand.summary,
+                                metadata={"instance_id": instance_id, "mode": "parallel_worktree"},
+                            ))
+                            
+                            if record_callback:
+                                record_callback(res)
+                            return res
+                    
+                    # Log failed candidates for debugging
+                    for r in results:
+                        if not r.ok_full:
+                            logger.debug(
+                                "Candidate %d failed: apply=%s targeted=%s full=%s",
+                                r.idx, r.ok_apply, r.ok_targeted, r.ok_full,
+                            )
+                            last_out = r.targeted_out or r.full_out or last_out
+                            
+                except Exception as e:
+                    logger.error("Parallel worktree evaluation failed: %s", e)
                 
                 # No parallel success, continue to next attempt
                 continue
