@@ -24,16 +24,22 @@ def score_reward(
     runtime_s: float,
     patch_size: int,
     files_touched: int,
+    rc_k: int = 0,
+    rc_top_wr: float = 0.5,
 ) -> float:
     """Compute reward from episode outcome.
 
     Pass dominates; penalties stop "huge patch spam".
+    Repair-card shaping: rewards capitalizing on strong cards,
+    penalizes wasting strong leads.
 
     Args:
         passed: Whether tests passed
         runtime_s: Runtime in seconds
         patch_size: Size of patch in bytes/chars
         files_touched: Number of files modified
+        rc_k: Number of repair cards retrieved
+        rc_top_wr: Win rate of top repair card (0-1)
 
     Returns:
         Reward value (higher is better)
@@ -42,6 +48,17 @@ def score_reward(
     r -= 0.002 * float(patch_size)
     r -= 0.02 * float(files_touched)
     r -= 0.0005 * float(runtime_s)
+    
+    # Repair-card shaping: if strong cards were present,
+    # reward passing more (capitalized on guidance)
+    # penalize failing more (wasted strong lead)
+    if rc_k > 0:
+        strength = min(max(rc_top_wr, 0.0), 1.0)
+        if passed:
+            r += 0.15 * strength
+        else:
+            r -= 0.15 * strength
+    
     return r
 
 
@@ -84,6 +101,12 @@ def main() -> int:
             # Use stored bucket if present; otherwise derive from error text
             bucket = ep.get("bucket", "unknown")
 
+            # Extract repair-card stats from episode if logged
+            rc_stats = (ep.get("extra", {}) or {}).get("repair_cards_stats", {}) or {}
+            rc_k = int(rc_stats.get("rc_k", 0))
+            rc_top_score = float(rc_stats.get("rc_top_score", 0.0))
+            rc_top_wr = float(rc_stats.get("rc_top_wr", 0.5))
+
             # Build context from error_message (sanitized) + metadata
             sig = parse_failure_signals(ep.get("error_message", ""))
             ctx = Context(
@@ -95,6 +118,9 @@ def main() -> int:
                 top_symbol=str(sig["top_symbol"]),
                 test_hint=str(sig["test_hint"]),
                 repo_fingerprint=fp,
+                rc_k=rc_k,
+                rc_top_score=rc_top_score,
+                rc_top_wr=rc_top_wr,
             )
 
             # Decision keys: if not logged yet, fall back to ep fields
@@ -110,6 +136,8 @@ def main() -> int:
                 runtime_s=float(ep.get("runtime", 0.0)),
                 patch_size=int(ep.get("patch_size", 0)),
                 files_touched=int(ep.get("files_touched", 0)),
+                rc_k=rc_k,
+                rc_top_wr=rc_top_wr,
             )
 
             learner.update(ctx, decision, reward)

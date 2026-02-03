@@ -502,9 +502,10 @@ def run_one_task(
                 rc_top_score=0.0,
                 rc_top_wr=0.5,
             )
-            upstream_decision = _upstream_learner.decide(upstream_ctx)
+            # Use joint policy for coordinated planner+prompt selection
+            upstream_decision = _upstream_learner.decide_joint(upstream_ctx)
             logger.info(
-                "Upstream decision: planner=%s strategy=%s prompt=%s",
+                "Upstream decision (joint): planner=%s strategy=%s prompt=%s",
                 upstream_decision.planner, upstream_decision.strategy, upstream_decision.prompt_variant,
             )
             
