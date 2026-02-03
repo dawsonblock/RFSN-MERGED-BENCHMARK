@@ -43,10 +43,15 @@ from swebench_max.dedup import PatchDeduper
 # Memory and learning systems
 from memory.unified import get_unified_memory
 
+# Contextual upstream learner
+from upstream_learner import UpstreamLearner, Context
+from upstream_learner.update_from_episodes import score_reward
+
 # Global learner instance for cross-task learning
 _learner = SWEBenchLearner()
 _patch_deduper = PatchDeduper()
 _unified_memory = get_unified_memory()
+_upstream_learner = UpstreamLearner()  # LinUCB contextual bandit
 
 def _sanitize_output(text: str) -> str:
     """Sanitize output to ensure deterministic hashing."""
@@ -455,9 +460,42 @@ def run_one_task(
 
         # Try to fix
         attempts = 0
+        upstream_decision = None  # Stores learner decision for update
+        upstream_ctx = None  # Stores context for update
         for attempt_num in range(max_attempts):
             attempts += 1
             logger.info("Attempt %d/%d for %s", attempts, max_attempts, instance_id)
+
+            # === UPSTREAM LEARNER: Build context and get decision ===
+            bucket = classify_bucket(last_out) if last_out else "unknown"
+            error_type = "Unknown"
+            for et in ["AttributeError", "TypeError", "ImportError", "KeyError", "ValueError", "AssertionError"]:
+                if et in (last_out or ""):
+                    error_type = et
+                    break
+            
+            upstream_ctx = Context(
+                repo=task.get("repo", "unknown"),
+                task_id=instance_id,
+                bucket=bucket,
+                error_type=error_type,
+                top_module=task.get("failing_files", [""])[0].split("/")[0] if task.get("failing_files") else "unknown",
+                top_symbol="",
+                test_hint="FAILED" if "FAILED" in (last_out or "").upper() else "ERROR",
+                repo_fingerprint=task.get("base_commit", "")[:12],
+            )
+            upstream_decision = _upstream_learner.decide(upstream_ctx)
+            logger.info(
+                "Upstream decision: planner=%s strategy=%s prompt=%s",
+                upstream_decision.planner, upstream_decision.strategy, upstream_decision.prompt_variant,
+            )
+            
+            # Inject upstream hints into task for propose_v2
+            task["_upstream_hints"] = {
+                "planner": upstream_decision.planner,
+                "strategy": upstream_decision.strategy,
+                "prompt_variant": upstream_decision.prompt_variant,
+            }
 
             # Propose patch candidates
             try:
@@ -711,8 +749,20 @@ def run_one_task(
                             "variant": cand.metadata.get("variant", ""),
                             "patch_size": patch_size,
                             "files_touched": files_touched,
+                            "prompt_variant": upstream_decision.prompt_variant if upstream_decision else "",
                         },
                     )
+                    
+                    # === UPSTREAM LEARNER: Update with success reward ===
+                    if upstream_ctx and upstream_decision:
+                        reward = score_reward(
+                            passed=True,
+                            runtime_s=rt,
+                            patch_size=patch_size,
+                            files_touched=files_touched,
+                        )
+                        _upstream_learner.update(upstream_ctx, upstream_decision, reward)
+                        logger.info("Upstream learner updated: reward=%.3f", reward)
                     
                     return res
 
@@ -736,6 +786,17 @@ def run_one_task(
                 "gate_rejections": gate_rejections,
             },
         )
+        
+        # === UPSTREAM LEARNER: Update with failure reward ===
+        if upstream_ctx and upstream_decision:
+            reward = score_reward(
+                passed=False,
+                runtime_s=0.0,
+                patch_size=0,
+                files_touched=0,
+            )
+            _upstream_learner.update(upstream_ctx, upstream_decision, reward)
+            logger.info("Upstream learner updated (fail): reward=%.3f", reward)
         
         return RunResult(
             passed=False, 

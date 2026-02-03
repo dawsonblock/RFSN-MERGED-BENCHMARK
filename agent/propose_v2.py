@@ -308,7 +308,7 @@ def build_upstream_context(
     logger.debug("Selected skills: %s", [h.name for h in skill_heads])
 
     # 4. Pick planner (override if upstream hint present)
-    upstream = task.get("_upstream", {})
+    upstream = task.get("_upstream_hints", {})
     
     # 5. File Retrieval - Use MultiLayer Localization when available
     file_context = {}
