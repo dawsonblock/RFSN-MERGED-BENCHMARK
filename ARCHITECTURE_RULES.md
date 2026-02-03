@@ -1,5 +1,3 @@
-# Authority Rules
-
 Authority rules:
 
 - rfsn_controller/ is the only executor
