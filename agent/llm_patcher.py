@@ -131,6 +131,14 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
             patches_applied=len(attempt_history),
         )
         
+        # Add repair cards context (similar successful fixes)
+        repair_cards = context.get("repair_cards", [])
+        if repair_cards:
+            from retrieval.repair_cards import format_repair_cards_for_prompt
+            repair_cards_block = format_repair_cards_for_prompt(repair_cards)
+            user_prompt = user_prompt + "\n" + repair_cards_block
+            logger.info("Added %d repair cards to prompt", len(repair_cards))
+        
         # 3. Call LLM
         config = LLMConfig(provider=LLMProvider.DEEPSEEK, temperature=variant.temperature)
         response = call_llm(user_prompt, system_prompt=system_prompt, config=config)

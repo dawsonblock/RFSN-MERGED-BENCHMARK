@@ -47,6 +47,9 @@ from memory.unified import get_unified_memory
 from upstream_learner import UpstreamLearner, Context
 from upstream_learner.update_from_episodes import score_reward
 
+# Repair cards for similar-fix memory
+from retrieval.repair_cards import add_card
+
 # Global learner instance for cross-task learning
 _learner = SWEBenchLearner()
 _patch_deduper = PatchDeduper()
@@ -763,6 +766,22 @@ def run_one_task(
                         )
                         _upstream_learner.update(upstream_ctx, upstream_decision, reward)
                         logger.info("Upstream learner updated: reward=%.3f", reward)
+                    
+                    # === REPAIR CARDS: Store successful fix for future retrieval ===
+                    try:
+                        repo_fp = task.get("_repo_fp") or task.get("repo_fingerprint") or ""
+                        bucket = task.get("_bucket") or classify_bucket(last_out)
+                        card = add_card(
+                            repo=task.get("repo", ""),
+                            repo_fp=repo_fp,
+                            bucket=bucket,
+                            test_output=last_out,
+                            patch_diff=cand.patch_text,
+                            patch_summary=f"Fixed {instance_id}: {cand.summary or 'passed'}",
+                        )
+                        logger.info("Stored repair card: %s", card.card_id)
+                    except Exception as e:
+                        logger.debug("Repair card storage failed: %s", e)
                     
                     return res
 

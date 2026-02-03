@@ -71,6 +71,9 @@ except ImportError:
     ASTFaultLocalizer = None
     localize_faults = None
 
+# Repair cards for similar-fix retrieval
+from retrieval.repair_cards import retrieve_cards
+
 logger = logging.getLogger(__name__)
 
 # Register default planner
@@ -575,6 +578,23 @@ def propose(
         except Exception as e:
             logger.debug("Episode retrieval failed: %s", e)
 
+    # Retrieve repair cards for similar-fix context
+    repair_cards = []
+    repo_fp = task.get("_repo_fp") or task.get("repo_fingerprint") or ""
+    bucket = task.get("_bucket") or task.get("bucket") or "unknown"
+    if repo_fp and last_test_output:
+        try:
+            repair_cards = retrieve_cards(
+                repo_fp=repo_fp,
+                bucket=bucket,
+                test_output=last_test_output,
+                k=3,
+            )
+            if repair_cards:
+                logger.info("Retrieved %d repair cards", len(repair_cards))
+        except Exception as e:
+            logger.debug("Repair cards retrieval failed: %s", e)
+
     # Build context dict for LLM
     llm_context = {
         "hypotheses": ctx.hypotheses,
@@ -586,6 +606,7 @@ def propose(
         "import_context": import_context,
         "targeted_tests": targeted_tests_cmds[:3],
         "past_failures": fail_signals[:2] if fail_signals else [],
+        "repair_cards": repair_cards,  # Similar successful fixes
     }
 
     # Call LLM patch generator
