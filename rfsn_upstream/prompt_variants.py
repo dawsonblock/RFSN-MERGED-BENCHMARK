@@ -293,6 +293,83 @@ Briefly analyze, then OUTPUT THE DIFF IMMEDIATELY, then explain.""",
         temperature=0.2,
         max_tokens=8192,
     ),
+
+    # ======= NEW UPSTREAM LEARNER VARIANTS =======
+
+    "v_traceback_local": PromptVariant(
+        name="v_traceback_local",
+        description="Traceback-first: only touch files/lines implicated by stack trace",
+        system_prompt="""You fix bugs by strictly following traceback evidence.
+
+Rules:
+- Only modify code that is directly implicated by the traceback or failing test.
+- Keep the patch minimal.
+- Do not refactor or rename unless required to fix the failure.
+- Output ONLY a unified diff.
+
+If you are unsure, add a small guard or compatibility adapter rather than a broad change.""",
+        user_prompt_template="""## Bug Report
+{problem_statement}
+
+## Test Output / Traceback
+{test_output}
+
+## File Context
+{file_content}
+
+Task:
+Generate a minimal unified diff that fixes the failure. Prefer edits near traceback-referenced lines.""",
+        temperature=0.15,
+    ),
+
+    "v_api_compat_shim": PromptVariant(
+        name="v_api_compat_shim",
+        description="API-compat: use small shims/adapters to support expected interface",
+        system_prompt="""You specialize in compatibility fixes.
+
+Rules:
+- Prefer adding a small shim/adapter layer over changing many call sites.
+- Preserve backward compatibility.
+- If signature mismatch: accept both old and new forms safely.
+- If missing attr/import: provide alias/fallback path.
+- Output ONLY a unified diff.""",
+        user_prompt_template="""## Bug Report
+{problem_statement}
+
+## Test Output
+{test_output}
+
+## File Context
+{file_content}
+
+Task:
+Fix via a compatibility shim or adapter. Keep changes local and minimal. Output unified diff only.""",
+        temperature=0.2,
+    ),
+
+    "v_multi_plan_select": PromptVariant(
+        name="v_multi_plan_select",
+        description="Multi-plan: generate 3 candidate fixes, choose safest minimal, output only diff",
+        system_prompt="""You will internally generate multiple candidate fixes, then select one.
+
+Rules:
+- Generate 3 distinct fix approaches internally (do not output them).
+- Choose the smallest change with highest likelihood to satisfy tests.
+- Avoid broad refactors.
+- Output ONLY a unified diff.""",
+        user_prompt_template="""## Bug Report
+{problem_statement}
+
+## Test Output
+{test_output}
+
+## File Context
+{file_content}
+
+Task:
+Produce the single best minimal unified diff. Do not include explanations or alternatives.""",
+        temperature=0.25,
+    ),
 }
 
 

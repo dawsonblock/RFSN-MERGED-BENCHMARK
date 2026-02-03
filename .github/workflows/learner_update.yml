@@ -7,9 +7,69 @@ on:
 
 jobs:
     update:
+        if: ${{ github.event.workflow_run.conclusion == 'success' }}
         runs-on: ubuntu-latest
+        permissions:
+            contents: write
+
         steps:
             - uses: actions/checkout@v4
-            - name: Update learner
+              with:
+                  fetch-depth: 0
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+                  cache: "pip"
+
+            - name: Install deps
               run: |
-                  python rfsn_upstream/learner/train_from_logs.py
+                  pip install -r requirements.txt
+
+            - name: Download benchmark artifacts
+              uses: actions/download-artifact@v4
+              with:
+                  run-id: ${{ github.event.workflow_run.id }}
+                  path: artifacts
+              continue-on-error: true
+
+            - name: Restore RFSN State cache
+              uses: actions/cache@v4
+              with:
+                  path: .rfsn_state
+                  key: rfsn-state-policy-${{ github.sha }}
+                  restore-keys: |
+                      rfsn-state-policy-
+                      rfsn-state-
+
+            - name: Update upstream policy from episodes
+              run: |
+                  # Merge any downloaded episode history with local state
+                  if [ -d "artifacts" ]; then
+                    find artifacts -name "episode_history.jsonl" -exec cat {} >> .rfsn_state/episodes/episode_history.jsonl \;
+                  fi
+
+                  # Run the policy updater
+                  python -m upstream_learner.update_from_episodes \
+                    --episode_jsonl ".rfsn_state/episodes/episode_history.jsonl" \
+                    --repo_dir "."
+
+            - name: Save RFSN State cache
+              uses: actions/cache/save@v4
+              with:
+                  path: .rfsn_state
+                  key: rfsn-state-policy-${{ github.sha }}
+
+            - name: Commit updated policy
+              run: |
+                  git config user.name "rfsn-bot"
+                  git config user.email "rfsn-bot@users.noreply.github.com"
+
+                  # Create policy directory if needed
+                  mkdir -p .rfsn_state/policy
+
+                  # Add and commit
+                  git add .rfsn_state/policy/upstream_policy.json
+                  git diff --cached --quiet || git commit -m "chore: Update upstream policy from benchmark results"
+                  git push
