@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,12 @@ except ImportError:
 # Log dependency status at module load
 def _log_embedding_dependencies() -> None:
     """Log embedding dependency status with install suggestions."""
+    # Check for skip flag
+    skip_codebert = os.environ.get("RFSN_SKIP_CODEBERT", "").lower() in ("1", "true", "yes")
+    if skip_codebert:
+        logger.info("RFSN_SKIP_CODEBERT=1: Using hash embeddings (fast mode)")
+        return
+    
     missing = []
     
     if not HAS_NUMPY:
@@ -127,6 +134,11 @@ class CodeBERTEmbedder:
         """Lazy load the model."""
         if self._model is not None:
             return True
+        
+        # Check skip flag
+        skip_codebert = os.environ.get("RFSN_SKIP_CODEBERT", "").lower() in ("1", "true", "yes")
+        if skip_codebert:
+            return False
         
         if not HAS_TRANSFORMERS:
             logger.info("Transformers not available, using hash embeddings")
