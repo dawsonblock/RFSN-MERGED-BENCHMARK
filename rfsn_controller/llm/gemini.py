@@ -295,12 +295,20 @@ def client():
     return _client
 
 
-def call_model(model_input: str, temperature: float = 0.0) -> dict:
+def call_model(
+    model_input: str,
+    temperature: float = 0.0,
+    model: str | None = None,
+    max_tokens: int = 8192,
+    **kwargs  # Accept extra keyword args for compatibility
+) -> dict:
     """Call the Gemini model with structured JSON output enforcement.
 
     Args:
         model_input: The text prompt to send to the model.
         temperature: Sampling temperature for creative variance.
+        model: Optional model override (defaults to MODULE constant).
+        max_tokens: Maximum response tokens.
 
     Returns:
         A dictionary parsed from the JSON response. It always contains
@@ -314,12 +322,16 @@ def call_model(model_input: str, temperature: float = 0.0) -> dict:
     
     genai, types = _ensure_genai_imported()
     output_schema = _build_schemas()
+    
+    # Use provided model or default
+    model_name = model or MODEL
 
     cfg = types.GenerateContentConfig(
         temperature=temperature,
         system_instruction=SYSTEM,
         response_mime_type="application/json",
         response_schema=output_schema,
+        max_output_tokens=max_tokens,
     )
     
     error_msg = None
@@ -328,10 +340,11 @@ def call_model(model_input: str, temperature: float = 0.0) -> dict:
     
     try:
         resp = client().models.generate_content(
-            model=MODEL,
+            model=model_name,
             contents=model_input,
             config=cfg,
         )
+
         
         # Extract token usage from response
         if hasattr(resp, "usage_metadata"):

@@ -37,6 +37,10 @@ DEFAULT_ARMS: dict[str, list[str]] = {
         "v_api_compat_shim",
         "v_multi_plan_select",
     ],
+    "model": [
+        "flash",
+        "reasoner",
+    ],
 }
 
 # Joint planner×prompt arms (cartesian product of key combinations)
@@ -68,6 +72,7 @@ class Decision:
     planner: str
     strategy: str
     prompt_variant: str
+    model: str
 
 
 class UpstreamLearner:
@@ -82,12 +87,12 @@ class UpstreamLearner:
         learner.update(ctx, decision, reward)
     """
 
-    def __init__(self, store: PolicyStore | None = None, d: int = 15) -> None:
+    def __init__(self, store: PolicyStore | None = None, d: int = 16) -> None:
         """Initialize learner.
 
         Args:
             store: Policy storage backend (defaults to file-based)
-            d: Feature dimension (default 15, includes repair-card features)
+            d: Feature dimension (default 16, includes attempt + repair-card features)
         """
         self.store = store or PolicyStore()
         self.d = d
@@ -150,7 +155,14 @@ class UpstreamLearner:
         planner = self._pick("planner", x)
         strategy = self._pick("strategy", x)
         prompt = self._pick("prompt", x)
-        return Decision(planner=planner, strategy=strategy, prompt_variant=prompt)
+        
+        # Rule-based model escalation fallback, but picker can learn too
+        if ctx.attempt <= 2:
+            model = "flash"
+        else:
+            model = self._pick("model", x)
+            
+        return Decision(planner=planner, strategy=strategy, prompt_variant=prompt, model=model)
 
     def decide_joint(self, ctx: Context) -> Decision:
         """Make decision using joint planner+prompt arm.
@@ -188,10 +200,16 @@ class UpstreamLearner:
             planner = self._pick("planner", x)
             prompt = self._pick("prompt", x)
         
-        # Strategy is still independent
+        # Strategy and Model are still independent
         strategy = self._pick("strategy", x)
         
-        return Decision(planner=planner, strategy=strategy, prompt_variant=prompt)
+        # Model escalation logic
+        if ctx.attempt <= 2:
+            model = "flash"
+        else:
+            model = self._pick("model", x)
+        
+        return Decision(planner=planner, strategy=strategy, prompt_variant=prompt, model=model)
 
     def update(self, ctx: Context, decision: Decision, reward: float) -> None:
         """Update learner with reward observation.
@@ -208,6 +226,7 @@ class UpstreamLearner:
             ("planner", decision.planner),
             ("strategy", decision.strategy),
             ("prompt", decision.prompt_variant),
+            ("model", decision.model),
         ]:
             hb = self.policy["bandits"][head]["arms"]
             if chosen not in hb:

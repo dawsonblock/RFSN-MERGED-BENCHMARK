@@ -9,14 +9,12 @@ Builds an index of:
 Uses ctags if available, falls back to regex patterns.
 """
 
-from __future__ import annotations
-
 import re
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
 from .types import LocalizationHit
 from rfsn_controller.structured_logging import get_logger
@@ -32,7 +30,7 @@ class Symbol:
     kind: str  # function, class, method, variable
     file_path: str
     line_number: int
-    signature: Optional[str] = None
+    signature: str | None = None
 
 
 @dataclass
@@ -41,7 +39,7 @@ class ImportRelation:
     
     from_file: str
     to_module: str
-    imported_names: List[str] = field(default_factory=list)
+    imported_names: list[str] = field(default_factory=list)
     line_number: int = 0
 
 
@@ -50,11 +48,11 @@ class SymbolIndex:
     
     def __init__(self):
         """Initialize symbol index."""
-        self.symbols: Dict[str, List[Symbol]] = defaultdict(list)
-        self.imports: List[ImportRelation] = []
-        self.call_graph: Dict[str, Set[str]] = defaultdict(set)
+        self.symbols: dict[str, list[Symbol]] = defaultdict(list)
+        self.imports: list[ImportRelation] = []
+        self.call_graph: dict[str, set[str]] = defaultdict(set)
         # Inheritance: class_name -> list of parent class names
-        self.class_bases: Dict[str, List[str]] = defaultdict(list)
+        self.class_bases: dict[str, list[str]] = defaultdict(list)
     
     def build(self, repo_dir: Path) -> None:
         """Build symbol index for repository.
@@ -78,25 +76,25 @@ class SymbolIndex:
         logger.info(f"Indexed {len(self.symbols)} symbols, "
                    f"{len(self.imports)} imports")
     
-    def find_symbol(self, name: str) -> List[Symbol]:
+    def find_symbol(self, name: str) -> list[Symbol]:
         """Find symbols by name.
         
         Args:
             name: Symbol name
             
         Returns:
-            List of matching symbols
+            list of matching symbols
         """
         return self.symbols.get(name, [])
     
-    def find_callers(self, symbol_name: str) -> Set[str]:
+    def find_callers(self, symbol_name: str) -> set[str]:
         """Find potential callers of a symbol.
         
         Args:
             symbol_name: Symbol to find callers for
             
         Returns:
-            Set of file paths that may call this symbol
+            set of file paths that may call this symbol
         """
         callers = set()
         
@@ -112,7 +110,7 @@ class SymbolIndex:
         
         return callers
     
-    def find_related_files(self, file_path: str, max_depth: int = 2) -> Set[str]:
+    def find_related_files(self, file_path: str, max_depth: int = 2) -> set[str]:
         """Find files related through imports.
         
         Args:
@@ -152,16 +150,16 @@ class SymbolIndex:
         
         return related
     
-    def localize_by_symbol(self, symbol_name: str) -> List[LocalizationHit]:
+    def localize_by_symbol(self, symbol_name: str) -> list[LocalizationHit]:
         """Localize by symbol name.
         
         Args:
             symbol_name: Symbol to localize
             
         Returns:
-            List of localization hits
+            list of localization hits
         """
-        hits = []
+        hits: list[LocalizationHit] = []
         
         # Direct symbol definitions
         for symbol in self.find_symbol(symbol_name):
@@ -205,31 +203,45 @@ class SymbolIndex:
         
         return hits
     
-    def resolve_inheritance_chain(self, class_name: str, visited: set = None) -> List[tuple]:
+    def resolve_inheritance_chain(self, class_name: str, visited: set | None = None) -> list[tuple]:
         """Resolve full inheritance chain for a class.
         
         Args:
             class_name: Class name to resolve
-            visited: Set of already-visited class names (for cycle detection)
+            visited: set of already-visited class names (for cycle detection)
             
         Returns:
-            List of (file_path, parent_class_name) tuples for all ancestor classes
+            list of (file_path, parent_class_name) tuples for all ancestor classes
         """
         if visited is None:
             visited = set()
         
-        if class_name in visited:
+        # Handle partially qualified names (e.g., .core.Model)
+        clean_name = class_name.split('.')[-1]
+        
+        if clean_name in visited:
             return []  # Avoid infinite loops
         
-        visited.add(class_name)
+        visited.add(clean_name)
         results = []
         
         # Get direct parent classes
-        parent_names = self.class_bases.get(class_name, [])
+        parent_names = self.class_bases.get(clean_name, [])
         
+        # If no bases found for the clean name, try the original name if it was different
+        if not parent_names and class_name != clean_name:
+            parent_names = self.class_bases.get(class_name, [])
+
         for parent_name in parent_names:
+            # Resolve parent name to clean name for symbol lookup
+            clean_parent = parent_name.split('.')[-1]
+            
             # Find where parent class is defined
-            parent_symbols = self.find_symbol(parent_name)
+            parent_symbols = self.find_symbol(clean_parent)
+            
+            # If not found by clean name, try exact name
+            if not parent_symbols:
+                parent_symbols = self.find_symbol(parent_name)
             
             for parent_sym in parent_symbols:
                 if parent_sym.kind == "class":
@@ -239,6 +251,28 @@ class SymbolIndex:
                     results.extend(self.resolve_inheritance_chain(parent_name, visited))
         
         return results
+
+    def find_callees(self, symbol_name: str) -> set[str]:
+        """Find modules/files that the given symbol depends on.
+        
+        Args:
+            symbol_name: Symbol name to analyze
+            
+        Returns:
+            Set of file paths that this symbol may depend on
+        """
+        callees = set()
+        symbol_defs = self.find_symbol(symbol_name)
+        
+        for sym_def in symbol_defs:
+            # Files imported by the file containing this symbol
+            for import_rel in self.imports:
+                if import_rel.from_file == sym_def.file_path:
+                    module_file = self._resolve_module(import_rel.to_module)
+                    if module_file:
+                        callees.add(module_file)
+        
+        return callees
     
     def _try_ctags(self, repo_dir: Path) -> bool:
         """Try to build index using ctags.

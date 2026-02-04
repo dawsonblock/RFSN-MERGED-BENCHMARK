@@ -17,15 +17,23 @@ All intelligence is upstream.
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
 import re
+import shutil
 import subprocess
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any, Callable
+from enum import Enum
+from typing import Any, TYPE_CHECKING
 
+if TYPE_CHECKING:
+    from swebench_max.evaluator import EvalResult
 
-from eval.repo_setup import clone_repo, hard_reset_clean, apply_patch_text, cleanup_workspace
+from eval.repo_setup import apply_patch_text, cleanup_workspace, clone_repo, hard_reset_clean
 from eval.test_cmd import derive_test_command_for_repo
 
 from agent.gate_adapter import GateAdapter
@@ -37,7 +45,7 @@ from learning.swebench_learner import SWEBenchLearner, classify_bucket
 from learning.outcomes import Outcome
 
 # SWE-bench MAX advanced components
-from swebench_max.evaluator import evaluate_candidate, EvalResult
+from swebench_max.evaluator import evaluate_candidate
 from swebench_max.dedup import PatchDeduper
 
 # Memory and learning systems
@@ -90,9 +98,7 @@ def _normalize_patch(patch: str) -> set:
     current_file = None
     
     for line in patch.split('\n'):
-        if line.startswith('--- a/'):
-            current_file = line[6:].strip()
-        elif line.startswith('+++ b/'):
+        if line.startswith(('--- a/', '+++ b/')):
             current_file = line[6:].strip()
         elif line.startswith('-') and not line.startswith('---') and current_file:
             changes.add((current_file, 'remove', line[1:].strip()))
@@ -264,7 +270,7 @@ def _evaluate_candidates_parallel(
         # Submit parallel evaluation
         with ThreadPoolExecutor(max_workers=min(len(worktrees), max_parallel)) as executor:
             futures = {}
-            for wt, cand in zip(worktrees, candidates_to_test):
+            for wt, cand in zip(worktrees, candidates_to_test, strict=True):
                 patch_text = cand.get("patch_text", "")
                 if not patch_text:
                     continue
@@ -501,12 +507,13 @@ def run_one_task(
                 rc_k=0,
                 rc_top_score=0.0,
                 rc_top_wr=0.5,
+                attempt=attempt_num + 1,
             )
             # Use joint policy for coordinated planner+prompt selection
             upstream_decision = _upstream_learner.decide_joint(upstream_ctx)
             logger.info(
-                "Upstream decision (joint): planner=%s strategy=%s prompt=%s",
-                upstream_decision.planner, upstream_decision.strategy, upstream_decision.prompt_variant,
+                "Upstream decision (joint): planner=%s strategy=%s prompt=%s model=%s",
+                upstream_decision.planner, upstream_decision.strategy, upstream_decision.prompt_variant, upstream_decision.model
             )
             
             # Inject upstream hints into task for propose_v2
@@ -514,6 +521,7 @@ def run_one_task(
                 "planner": upstream_decision.planner,
                 "strategy": upstream_decision.strategy,
                 "prompt_variant": upstream_decision.prompt_variant,
+                "model": upstream_decision.model,
             }
 
             # Propose patch candidates
@@ -531,8 +539,18 @@ def run_one_task(
                         })
                     logger.info("Ensemble generated %d candidates", len(candidates))
                 else:
-                    # Standard upstream intelligence
-                    candidates = propose_v2(task, last_out, llm_patch_fn, workspace_root=ws.path)
+                    # SPECULATIVE SETUP: Warm up worktree pool while LLM is generating candidates
+                    from orchestrator.worktree_eval import WorktreePool
+                    pool = WorktreePool(ws.path, "HEAD", os.path.dirname(ws.path), size=3)
+                    pool.warm_up()
+                    
+                    try:
+                        # Standard upstream intelligence
+                        candidates = propose_v2(task, last_out, llm_patch_fn, workspace_root=ws.path)
+                    except Exception as e:
+                        logger.error("Propose failed: %s", e)
+                        candidates = []
+                        pool.cleanup()
             except Exception as e:
                 logger.error("Propose failed: %s", e)
                 candidates = []
@@ -557,15 +575,21 @@ def run_one_task(
                 full_test_cmd = cmd
                 
                 try:
-                    best_idx, results, best_workdir = evaluate_candidates_in_parallel(
-                        base_repo=ws.path,
-                        base_ref="HEAD",
-                        candidates=cand_dicts,
-                        targeted_test_cmd=targeted_test_cmd,
-                        full_test_cmd=full_test_cmd,
-                        max_workers=min(3, len(candidates)),
-                        keep_best_worktree=False,  # Don't keep; we'll re-apply in main repo
-                    )
+                    try:
+                        best_idx, results, best_workdir = evaluate_candidates_in_parallel(
+                            base_repo=ws.path,
+                            base_ref="HEAD",
+                            candidates=cand_dicts,
+                            targeted_test_cmd=targeted_test_cmd,
+                            full_test_cmd=full_test_cmd,
+                            max_workers=min(3, len(candidates)),
+                            keep_best_worktree=False,  # Don't keep; we'll re-apply in main repo
+                            pool=pool if 'pool' in locals() else None,
+                        )
+                    finally:
+                        # Ensure pool is cleaned up if we are using speculative setup
+                        if 'pool' in locals():
+                            pool.cleanup()
                     
                     if best_idx is not None:
                         # Found a winner in parallel mode!
@@ -576,6 +600,7 @@ def run_one_task(
                             
                             patch_size = best_result.patch_size
                             files_touched = best_result.files_touched
+                            
                             rt = best_result.runtime_s
                             out = best_result.full_out or best_result.targeted_out
                             
@@ -600,7 +625,7 @@ def run_one_task(
                                 repo=task.get("repo", "unknown"),
                                 signature=(task.get("problem_statement", "") or "")[:2000],
                                 patch_summary=cand.summary,
-                                metadata={"instance_id": instance_id, "mode": "parallel_worktree"},
+                                metadata={"instance_id": instance_id, "mode": "parallel_worktree", "episode_trace": f"Episode trace for {task['instance_id']!r}"},
                             ))
                             
                             if record_callback:

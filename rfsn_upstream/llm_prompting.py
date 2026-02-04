@@ -239,14 +239,24 @@ def _call_gemini(
         full_prompt = f"{system_prompt}\n\n{prompt}" if system_prompt else prompt
         
         response = call_gemini(
-            prompt=full_prompt,
+            model_input=full_prompt,
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
         )
-        return response.get("content", "") if isinstance(response, dict) else str(response)
-    except ImportError:
-        raise RuntimeError("rfsn_controller.llm.call_gemini not available")
+        # call_gemini returns structured JSON with mode, diff, etc.
+        # Extract diff for patch generation or fall back to full response string
+        if isinstance(response, dict):
+            diff = response.get("diff", "")
+            if diff:
+                return diff
+            # If no diff, return the full response as string for parsing
+            return str(response)
+        return str(response)
+
+    except ImportError as e:
+        raise RuntimeError("rfsn_controller.llm.call_gemini not available") from e
+
 
 
 def parse_json_response(response: str) -> dict[str, Any] | None:

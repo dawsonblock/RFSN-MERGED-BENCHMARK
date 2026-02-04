@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
           cache: "pip"
@@ -28,7 +28,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Restore policy/state cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: .rfsn_state
           key: rfsn-state-policy
@@ -36,7 +36,7 @@ jobs:
             rfsn-state-
 
       - name: Download benchmark artifacts
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           path: artifacts
 
@@ -63,7 +63,7 @@ jobs:
             --repo_dir "."
 
       - name: Save policy/state cache
-        uses: actions/cache/save@v3
+        uses: actions/cache/save@v4
         with:
           path: .rfsn_state
           key: rfsn-state-policy

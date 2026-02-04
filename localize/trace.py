@@ -19,7 +19,7 @@ except ImportError:
     logger = logging.getLogger(__name__)
 
 
-def parse_python_traceback(traceback: str, repo_dir: Path) -> List[LocalizationHit]:
+def parse_traceback(traceback_text: str, repo_dir: str) -> list[LocalizationHit]:
     """Parse Python traceback to extract file locations.
     
     Args:
@@ -31,14 +31,14 @@ def parse_python_traceback(traceback: str, repo_dir: Path) -> List[LocalizationH
         
     Example:
         >>> tb = 'File "main.py", line 42, in foo\\n    x = y.bar()\\nAttributeError'
-        >>> hits = parse_python_traceback(tb, Path("/repo"))
+        >>> hits = parse_traceback(tb, Path("/repo"))
     """
     hits = []
     
     # Pattern: File "path/to/file.py", line 42, in function_name
-    pattern = r'File "([^"]+)", line (\d+)'
+    file_pattern = r'File "([^"]+)", line (\d+)'
     
-    for match in re.finditer(pattern, traceback):
+    for match in re.finditer(file_pattern, traceback_text):
         file_path = match.group(1)
         line_num = int(match.group(2))
         
@@ -55,15 +55,15 @@ def parse_python_traceback(traceback: str, repo_dir: Path) -> List[LocalizationH
                 continue
         
         # Extract surrounding context
-        snippet = _extract_snippet(traceback, match.start())
+        snippet = _extract_snippet(traceback_text, match.start())
         
         hit = LocalizationHit(
-            file=file_path,
-            span=(max(1, line_num - 5), line_num + 5),
+            file_path=file_path,
+            line_start=max(1, line_num - 5),
+            line_end=line_num + 5,
             score=1.0,  # Highest confidence
-            evidence_type="trace",
-            evidence_text=snippet,
-            why=f"Stack trace points to line {line_num}",
+            method="trace",
+            evidence=snippet,
             snippet=snippet,
             confidence=0.95,
         )
@@ -105,17 +105,17 @@ def parse_test_failures(test_output: str, repo_dir: Path) -> List[LocalizationHi
         test_name = match.group(2)
         
         hit = LocalizationHit(
-            file=file_path,
-            span=(1, 1000),  # Whole file
+            file_path=file_path,
+            line_start=1,
+            line_end=1000,  # Whole file
             score=0.8,
-            evidence_type="trace",
-            evidence_text=f"Test {test_name} failed",
-            why=f"Test failure in {test_name}",
+            method="trace",
+            evidence=f"Test {test_name} failed",
             confidence=0.7,
         )
         hits.append(hit)
     
     # Also parse any tracebacks in the output
-    hits.extend(parse_python_traceback(test_output, repo_dir))
+    hits.extend(parse_traceback(test_output, repo_dir))
     
     return hits

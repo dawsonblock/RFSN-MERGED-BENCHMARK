@@ -60,7 +60,7 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
         # --- Prompt variant selection ---
         # Priority:
         #   1) upstream forced variant (if valid)
-        #   2) repair-loop variant on retries (if exists)
+        #   2) rotate variants on retries for diversity
         #   3) bandit selection
         up = {}
         if isinstance(context, dict):
@@ -77,17 +77,48 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
         )
         forced_flag = False
 
+        # Diversity rotation for retries - try different variants each attempt
+        diversity_variants = [
+            "v_diagnose_then_patch",      # Attempt 1: diagnose first
+            "v_multi_hypothesis",          # Attempt 2: multiple hypotheses
+            "v_traceback_local",          # Attempt 3: traceback-focused
+            "v_api_compat_shim",          # Attempt 4: compatibility shim
+            "v_chain_of_thought",         # Attempt 5: reasoning first
+            "v_repair_loop",              # Attempt 6: iterative refinement
+        ]
+
         if forced and forced in variant_names:
             variant_name = forced
             forced_flag = True
-            logger.info("Prompt variant forced by upstream: %s", variant_name)
-        elif attempt_history and "v_repair_loop" in variant_names:
-            variant_name = "v_repair_loop"
+            logger.info("ENVIRONMENT: Prompt variant forced by upstream: %s", variant_name)
+        elif attempt_history:
+            # Rotate through diversity variants on retries
+            attempt_idx = len(attempt_history) % len(diversity_variants)
+            variant_name = diversity_variants[attempt_idx]
+            logger.info("ENVIRONMENT: Using diversity variant %s (attempt %d)", 
+                        variant_name, len(attempt_history) + 1)
         else:
             variant_name = bandit.select_arm()
             
+        # --- Model selection ---
+        # Always use DeepSeek for code generation (most reliable for code)
+        # Ignore upstream model hints - user explicitly requested deepseek
+        model_hint = "reasoner"  # Force deepseek
+        provider = LLMProvider.DEEPSEEK
+        model_id = "deepseek-reasoner"
+
+        
         variant = get_variant(variant_name)
-        logger.info("Selected variant: %s (attempt %d)", variant_name, len(attempt_history) + 1)
+        
+        # Temperature scaling: increase on retries for more diversity
+        base_temp = variant.temperature
+        attempt_num = len(attempt_history)
+        temp_boost = min(0.3, 0.1 * attempt_num)  # Cap at +0.3
+        temperature = min(1.0, base_temp + temp_boost)
+        
+        logger.info("ENVIRONMENT: Selected variant: %s, model: %s, temp: %.2f (attempt %d)", 
+                    variant_name, model_hint, temperature, attempt_num + 1)
+
         
         # 2. Build prompt
         task_info = plan.task if hasattr(plan, "task") else {}
@@ -140,7 +171,15 @@ def get_llm_patch_fn(model_name: str = "deepseek"):
             logger.info("Added %d repair cards to prompt", len(repair_cards))
         
         # 3. Call LLM
-        config = LLMConfig(provider=LLMProvider.DEEPSEEK, temperature=variant.temperature)
+        # Use Reasoner model for complex code fixes if selected
+        timeout = 180 if model_hint == "reasoner" else 60
+        config = LLMConfig(
+            provider=provider, 
+            model=model_id, 
+            temperature=temperature,  # Use computed temperature with retry boost
+            timeout=timeout
+
+        )
         response = call_llm(user_prompt, system_prompt=system_prompt, config=config)
 
         content = response.content

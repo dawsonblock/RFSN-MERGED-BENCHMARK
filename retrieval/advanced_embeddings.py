@@ -5,6 +5,7 @@ FAISS indexing for fast similarity search at scale.
 """
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import logging
@@ -15,6 +16,16 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Shutdown guard to prevent CodeBERT loading during exit
+_shutting_down = False
+
+def _set_shutting_down():
+    global _shutting_down
+    _shutting_down = True
+
+atexit.register(_set_shutting_down)
+
 
 # Optional dependencies - graceful fallback
 try:
@@ -135,6 +146,10 @@ class CodeBERTEmbedder:
         if self._model is not None:
             return True
         
+        # Prevent loading during shutdown to avoid segfaults
+        if _shutting_down:
+            return False
+        
         # Check skip flag
         skip_codebert = os.environ.get("RFSN_SKIP_CODEBERT", "").lower() in ("1", "true", "yes")
         if skip_codebert:
@@ -143,6 +158,7 @@ class CodeBERTEmbedder:
         if not HAS_TRANSFORMERS:
             logger.info("Transformers not available, using hash embeddings")
             return False
+
         
         with self._lock:
             if self._model is not None:

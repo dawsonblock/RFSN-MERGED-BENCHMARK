@@ -7,11 +7,11 @@ Combines:
 4. Symbol/import graph analysis (structural)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
+
+from rfsn_controller.structured_logging import get_logger
 
 from .trace import parse_python_traceback
 from .ripgrep import localize_from_issue, localize_from_trace, RipgrepConfig
@@ -80,9 +80,9 @@ class MultiLayerLocalizer:
         self,
         problem_statement: str,
         repo_dir: Path,
-        traceback: Optional[str] = None,
-        failing_tests: Optional[List[str]] = None,
-    ) -> List[LocalizationHit]:
+        traceback: str | None = None,
+        failing_tests: list[str] | None = None,
+    ) -> list[LocalizationHit]:
         """Perform multi-layer localization.
         
         Args:
@@ -139,21 +139,50 @@ class MultiLayerLocalizer:
             if self.symbol_index is None:
                 self.symbol_index = build_symbol_index(repo_dir)
             
-            # Extract potential symbol names from issue
+            # Extract potential symbol names from issue and traceback
             import re
             identifiers = re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b', problem_statement)  # CamelCase
             identifiers += re.findall(r'\b[a-z]+_[a-z_]+\b', problem_statement)  # snake_case
             
+            if traceback:
+                identifiers += re.findall(r'\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b', traceback)
+                identifiers += re.findall(r'\b[a-z]+_[a-z_]+\b', traceback)
+            
+            # Deduplicate and limit
+            identifiers = list(dict.fromkeys(identifiers))
+            
             symbol_hits = []
-            for identifier in identifiers[:20]:  # Limit to top 20
-                symbol_hits.extend(self.symbol_index.localize_by_symbol(identifier))
+            for identifier in identifiers[:30]:  # Limit to top 30
+                identifier_hits = self.symbol_index.localize_by_symbol(identifier)
+                symbol_hits.extend(identifier_hits)
+                
+                # Layer 2c: Callee tracking (downstream dependencies)
+                # For each direct hit, see if it has critical callees
+                for hit in identifier_hits:
+                    if hit.score > 0.8:  # Only for high-confidence symbol hits
+                        # Extract symbol name from evidence if possible
+                        # Evidence format: "Symbol definition: class Model"
+                        match = re.search(r'Symbol definition: \w+ (\w+)', hit.evidence)
+                        if match:
+                            sym_name = match.group(1)
+                            callee_files = self.symbol_index.find_callees(sym_name)
+                            for c_file in callee_files:
+                                if c_file != hit.file_path:
+                                    symbol_hits.append(LocalizationHit(
+                                        file_path=c_file,
+                                        line_start=1,
+                                        line_end=1,
+                                        score=hit.score * 0.8,
+                                        evidence=f"Dependency of {sym_name} (found in {hit.file_path})",
+                                        method="callee_tracking",
+                                    ))
             
             # Weight scores
             for hit in symbol_hits:
                 hit.score *= self.config.score_weights.get("symbol", 0.9)
             
             all_hits.extend(symbol_hits)
-            logger.info(f"Found {len(symbol_hits)} symbol hits")
+            logger.info(f"Found {len(symbol_hits)} total symbol/dependency hits")
         
         # Layer 3: Embedding semantic search (deep)
         if self.config.use_embeddings and HAS_SEMANTIC:
@@ -191,17 +220,17 @@ class MultiLayerLocalizer:
         
         return final_hits[:self.config.max_results]
     
-    def _fuse_hits(self, hits: List[LocalizationHit]) -> List[LocalizationHit]:
+    def _fuse_hits(self, hits: list[LocalizationHit]) -> list[LocalizationHit]:
         """Fuse and deduplicate hits from multiple layers.
         
         Args:
-            hits: List of all hits from all layers
+            hits: list of all hits from all layers
             
         Returns:
             Fused and ranked list of hits
         """
         # Group by file and line range
-        grouped = {}
+        grouped: dict[tuple[str, int, int], LocalizationHit] = {}
         
         for hit in hits:
             key = (hit.file_path, hit.line_start, hit.line_end)
@@ -229,10 +258,10 @@ class MultiLayerLocalizer:
 def localize_issue(
     problem_statement: str,
     repo_dir: Path,
-    traceback: Optional[str] = None,
-    failing_tests: Optional[List[str]] = None,
-    config: LocalizationConfig = None,
-) -> List[LocalizationHit]:
+    traceback: str | None = None,
+    failing_tests: list[str] | None = None,
+    config: LocalizationConfig | None = None,
+) -> list[LocalizationHit]:
     """High-level API for issue localization.
     
     This is the main entry point for localization. It runs all available

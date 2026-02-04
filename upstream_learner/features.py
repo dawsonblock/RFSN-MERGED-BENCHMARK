@@ -29,6 +29,8 @@ class Context:
     rc_k: int = 0
     rc_top_score: float = 0.0
     rc_top_wr: float = 0.5
+    # Attempt context
+    attempt: int = 1
 
 
 _ERR_RE = re.compile(r"\b([A-Za-z_]+Error)\b")
@@ -133,5 +135,7 @@ def featurize(ctx: Context) -> list[float]:
         min(float(max(ctx.rc_k, 0)), 5.0) / 5.0,
         min(float(max(ctx.rc_top_score, 0.0)), 10.0) / 10.0,
         float(min(max(ctx.rc_top_wr, 0.0), 1.0)),
+        # attempt feature (scaled to 0-1 for common range 1-10)
+        min(float(max(ctx.attempt - 1, 0)), 9.0) / 9.0,
         1.0,  # bias
     ]

@@ -118,6 +118,48 @@ def _remove_worktree(base_repo: str, wt_dir: str) -> None:
     _safe_rm(wt_dir)
 
 
+class WorktreePool:
+    """A pool of pre-created git worktrees for speculative evaluation."""
+    
+    def __init__(self, base_repo: str, base_ref: str, parent_dir: str, size: int = 4):
+        self.base_repo = base_repo
+        self.base_ref = base_ref
+        self.parent_dir = parent_dir
+        self.size = size
+        self.pool: list[str] = []
+        self.executor = ThreadPoolExecutor(max_workers=size)
+        self._warming = False
+
+    def warm_up(self) -> None:
+        """Start pre-creating worktrees in the background."""
+        if self._warming:
+            return
+        self._warming = True
+        for _ in range(self.size):
+            self.executor.submit(self._add_one)
+
+    def _add_one(self) -> None:
+        try:
+            wt = _make_worktree(self.base_repo, self.base_ref, self.parent_dir)
+            self.pool.append(wt)
+        except Exception:
+            pass
+
+    def get_worktree(self) -> str:
+        """Get a worktree from the pool, or create one if empty."""
+        if self.pool:
+            return self.pool.pop()
+        return _make_worktree(self.base_repo, self.base_ref, self.parent_dir)
+
+    def cleanup(self) -> None:
+        """Remove all worktrees in the pool."""
+        self._warming = False
+        while self.pool:
+            wt = self.pool.pop()
+            _remove_worktree(self.base_repo, wt)
+        self.executor.shutdown(wait=False)
+
+
 def _run_tests(
     workdir: str,
     targeted_cmd: list[str],
@@ -151,6 +193,7 @@ def evaluate_candidates_in_parallel(
     full_test_cmd: list[str],
     max_workers: int = 4,
     keep_best_worktree: bool = True,
+    pool: WorktreePool | None = None,
 ) -> tuple[int | None, list[CandidateResult], str | None]:
     """
     Evaluate patch candidates in parallel using git worktrees.
@@ -178,8 +221,8 @@ def evaluate_candidates_in_parallel(
     parent = tempfile.mkdtemp(prefix="rfsn_wt_eval_")
     results: list[CandidateResult] = []
 
-    def _one(i: int, patch: str) -> CandidateResult:
-        wt = _make_worktree(base_repo, base_ref, parent_dir=parent)
+    def _one(i: int, patch: str, pool: WorktreePool | None = None) -> CandidateResult:
+        wt = pool.get_worktree() if pool else _make_worktree(base_repo, base_ref, parent_dir=parent)
         t0 = time.time()
         ok_apply = _apply_patch_git(wt, patch)
         targeted_ok = False
@@ -213,40 +256,51 @@ def evaluate_candidates_in_parallel(
         )
 
     # Run candidates in parallel
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = []
-        for i, c in enumerate(candidates):
-            patch = c.get("patch") or c.get("diff") or ""
-            futs.append(ex.submit(_one, i, patch))
+    internal_pool = False
+    if pool is None:
+        pool = WorktreePool(base_repo, base_ref, parent, size=max_workers)
+        pool.warm_up()
+        internal_pool = True
+    
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futs = []
+            for i, c in enumerate(candidates):
+                patch = c.get("patch") or c.get("diff") or ""
+                futs.append(ex.submit(_one, i, patch, pool))
 
-        for f in as_completed(futs):
-            r = f.result()
-            results.append(r)
+            for f in as_completed(futs):
+                r = f.result()
+                results.append(r)
 
-    # Choose best candidate
-    ok_full = [r for r in results if r.ok_full]
-    if ok_full:
-        ok_full.sort(key=lambda r: (r.patch_size, r.full_runtime_s, r.runtime_s))
-        best = ok_full[0]
-    else:
-        ok_t = [r for r in results if r.ok_targeted]
-        if ok_t:
-            ok_t.sort(key=lambda r: (r.patch_size, r.targeted_runtime_s, r.runtime_s))
-            best = ok_t[0]
+        # Choose best candidate
+        ok_full = [r for r in results if r.ok_full]
+        if ok_full:
+            ok_full.sort(key=lambda r: (r.patch_size, r.full_runtime_s, r.runtime_s))
+            best = ok_full[0]
         else:
-            best = None
+            ok_t = [r for r in results if r.ok_targeted]
+            if ok_t:
+                ok_t.sort(key=lambda r: (r.patch_size, r.targeted_runtime_s, r.runtime_s))
+                best = ok_t[0]
+            else:
+                best = None
 
-    best_idx = best.idx if best else None
-    best_workdir = best.workdir if (best and keep_best_worktree) else None
+        best_idx = best.idx if best else None
+        best_workdir = best.workdir if (best and keep_best_worktree) else None
 
-    # Cleanup non-best worktrees
-    for r in results:
-        if best_workdir and r.workdir == best_workdir:
-            continue
-        _remove_worktree(base_repo, r.workdir)
+        # Cleanup non-best worktrees
+        for r in results:
+            if best_workdir and r.workdir == best_workdir:
+                continue
+            _remove_worktree(base_repo, r.workdir)
+            
+        return best_idx, sorted(results, key=lambda x: x.idx), best_workdir
+    finally:
+        # Cleanup internal pool if created here
+        if internal_pool:
+            pool.cleanup()
 
-    # Remove parent dir if no best kept
-    if not best_workdir:
-        _safe_rm(parent)
-
-    return best_idx, sorted(results, key=lambda x: x.idx), best_workdir
+        # Remove parent dir if no best kept
+        if not best_workdir if 'best_workdir' in locals() else False:
+            _safe_rm(parent)

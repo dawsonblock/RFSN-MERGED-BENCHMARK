@@ -221,9 +221,9 @@ class SWEBenchRunner:
         
         # 2. Retrieve similar memories
         fingerprint = compute_fingerprint(
-            error_message=task.problem_statement[:500],
-            test_output="",
-            file_paths=[],
+            failure_type="task_init",
+            message=task.problem_statement[:500],
+            context={"task_id": task.instance_id},
         )
         similar = self.memory.retrieve_similar(fingerprint, k=3)
         memories = [{"summary": m.summary, "outcome": m.outcome} for m, _ in similar]
